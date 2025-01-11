@@ -1,6 +1,7 @@
 # <p align="center">lem-ipc</p>
 
 > L'objectif est que les joueurs, regroupés en équipes, s'affrontent sur un plateau en 2D.
+> 
 > Pour qu'une équipe soit victorieuse, elle doit être la dernière à rester sur le plateau.
 >
 > Lorsqu'un joueur meurt, il disparaît du plateau.
@@ -47,5 +48,5 @@ cd lem-ipc && make
 ln -s $PWD/lem-ipc ~/.local/bin/lem-ipc
 export PATH=~/.local/bin:$PATH
 
-lem-ipc -h
+lem-ipc
 ```
