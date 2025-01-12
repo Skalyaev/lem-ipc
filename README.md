@@ -1,7 +1,5 @@
 # <p align="center">lem-ipc</p>
 
-<<<<<<< HEAD
-
 > L'objectif de ce projet est de faire communiquer plusieurs processus.
 >
 > Des joueurs, regroupés en équipes, s'affrontent sur un plateau en 2D.

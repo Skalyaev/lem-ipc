@@ -9,8 +9,7 @@ void new_pixel(t_img* const screen,
     const int xsize = x * bpp;
     const int ysize = y * screen->line_size;
 
-    char* dst = screen->addr + ysize + xsize;
-    *(uint*)dst = color;
+    *(uint*)(screen->addr + ysize + xsize) = color;
 }
 
 static byte put_pixels(t_img* const screen) {
