@@ -1,7 +1,10 @@
 # <p align="center">lem-ipc</p>
 
-> L'objectif est que les joueurs, regroupés en équipes, s'affrontent sur un plateau en 2D.
+<<<<<<< HEAD
+
+> L'objectif de ce projet est de faire communiquer plusieurs processus.
 >
+> Des joueurs, regroupés en équipes, s'affrontent sur un plateau en 2D.
 > Pour qu'une équipe soit victorieuse, elle doit être la dernière à rester sur le plateau.
 >
 > Lorsqu'un joueur meurt, il disparaît du plateau.
