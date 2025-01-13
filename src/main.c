@@ -21,41 +21,56 @@ int main(int ac, char** av) {
     getargs(ac, av);
     if(init() != EXIT_SUCCESS) return bye();
 
+    const size_t wm_size = sizeof(t_mlx);
+    data.wm = malloc(wm_size);
+    if(!data.wm) {
+
+        perror("main: malloc");
+        data.code = errno;
+        return bye();
+    }
+    memset(data.wm, 0, wm_size);
+    data.wm->mlx = mlx_init();
+
+    int sizex = 0;
+    int sizey = 0;
+    mlx_get_screen_size(data.wm->mlx, &sizex, &sizey);
+    if(data.shm->width * PIXEL_SIZE > sizex
+            || data.shm->height * PIXEL_SIZE > sizey) {
+
+        mlx_destroy_display(data.wm->mlx);
+        free(data.wm->mlx);
+        free(data.wm);
+        data.wm = NULL;
+        if(data.first) data.abort = YES;
+
+        fprintf(stderr, RED"Board too large: %dx%d < %dx%d\n"RESET,
+                sizex, sizey, data.shm->width * PIXEL_SIZE,
+                data.shm->height * PIXEL_SIZE);
+        return bye();
+    }
     if(data.opt.gui) return draw();
-    else if(join() != EXIT_SUCCESS) return bye();
+
+    mlx_destroy_display(data.wm->mlx);
+    free(data.wm->mlx);
+    free(data.wm);
+    data.wm = NULL;
+
+    if(join() != EXIT_SUCCESS) return bye();
+    ubyte idx = 0;
     while(YES) {
+        if(player_check() != EXIT_SUCCESS) return bye();
+        if(player_listen() != EXIT_SUCCESS) return bye();
+        if(player_think() != EXIT_SUCCESS) return bye();
+        if(player_communicate() != EXIT_SUCCESS) return bye();
+        if(player_move() != EXIT_SUCCESS) return bye();
+        if(!data.opt.quiet) {
 
-        printf("\nPosition: %d, %d\n", data.self->x, data.self->y);
-        printf("Team: %s\n", data.self->team->name);
-
-        if(semtimedop(data.semid, &data.sem->players_count_lock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
+            if(idx % 16 == 0)
+                if(player_log() != EXIT_SUCCESS) return bye();
+            idx++;
         }
-        printf("Teammates: %d\n", data.self->team->players_count);
-        if(semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
-        }
-        if(semtimedop(data.semid, &data.sem->players_count_lock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
-        }
-        printf("Players count: %d\n", data.shm->players_count);
-        if(semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
-        }
-        if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
-        }
-        printf("Teams count: %d\n", data.shm->teams_count);
-        if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)) {
-            perror("semtimedop");
-            return bye();
-        }
-        sleep(2);
+        usleep(100000);
     }
     return bye();
 }

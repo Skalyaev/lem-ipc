@@ -2,6 +2,30 @@
 
 extern t_lemipc data;
 
+static void clean_ipc() {
+
+    if(shmctl(data.shmid, IPC_RMID, NULL)) {
+
+        perror("clean_ipc: shmctl");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
+    if(data.semid > 0 && semctl(data.semid, 0, IPC_RMID)) {
+
+        perror("clean_ipc: semctl");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
+    if(access(SHM_PATH, F_OK) == 0 && remove(SHM_PATH)) {
+
+        perror("clean_ipc: remove");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
+    if(access(SEM_PATH, F_OK) == 0 && remove(SEM_PATH)) {
+
+        perror("clean_ipc: remove");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
+}
+
 static void leave_ipc(ubyte* const players_left) {
 
     if(!semtimedop(data.semid, &data.sem->players_count_lock,
@@ -13,81 +37,74 @@ static void leave_ipc(ubyte* const players_left) {
         if(semtimedop(data.semid, &data.sem->players_count_unlock,
                       1, &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("leave_ipc: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
     } else {
+        perror("leave_ipc: semtimedop");
         if(data.first) data.abort = YES;
         if(data.code == EXIT_SUCCESS) data.code = errno;
-        perror("semtimedop");
     }
     if(!semtimedop(data.semid, &data.sem->teams_lock,
                    1, &data.sem->timeout)) {
 
-        data.self->team->players_count--;
-        if(!data.self->team->players_count) {
+        t_team* team = NULL;
+        for(ubyte x = 0; x < data.shm->max_teams; x++) {
 
-            memset(data.self->team->name, 0, NAME_SIZE);
+            if(!data.shm->teams[x].name[0]) continue;
+            if(!strcmp(data.shm->teams[x].name, data.opt.team)) {
+
+                team = &data.shm->teams[x];
+                break;
+            }
+            if(data.shm->teams[x].players_count)continue;
+            data.shm->teams_count--;
+            memset(data.shm->teams[x].name, 0, NAME_SIZE);
+        }
+        team->players_count--;
+        if(!team->players_count) {
+
+            memset(team->name, 0, NAME_SIZE);
             data.shm->teams_count--;
         }
         if(semtimedop(data.semid, &data.sem->teams_unlock,
                       1, &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("leave_ipc: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
     } else {
+        perror("leave_ipc: semtimedop");
         if(data.first) data.abort = YES;
         if(data.code == EXIT_SUCCESS) data.code = errno;
-        perror("semtimedop");
     }
     if(!semtimedop(data.semid, &data.sem->board_lock,
                    1, &data.sem->timeout)) {
 
         for(ushort x = data.self->x; x < data.self->x + PLAYER_VOLUME; x++)
             for(ushort y = data.self->y; y < data.self->y + PLAYER_VOLUME; y++)
-                data.shm->board[x][y].team = NULL;
+                data.shm->board[x][y].color = 0;
 
         if(semtimedop(data.semid, &data.sem->board_unlock,
                       1, &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("leave_ipc: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
     } else {
+        perror("leave_ipc: semtimedop");
         if(data.first) data.abort = YES;
-        if(data.code == EXIT_SUCCESS) data.code = errno;
-        perror("semtimedop");
-    }
-}
-
-static void clean_ipc() {
-
-    if(shmctl(data.shmid, IPC_RMID, NULL)) {
-
-        perror("shmctl");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
-    }
-    if(data.semid > 0 && semctl(data.semid, 0, IPC_RMID)) {
-
-        perror("semctl");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
-    }
-    if(access(SHM_PATH, F_OK) == 0 && remove(SHM_PATH)) {
-
-        perror("remove");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
-    }
-    if(access(SEM_PATH, F_OK) == 0 && remove(SEM_PATH)) {
-
-        perror("remove");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
 }
 
 static byte clean_wm() {
 
-    ubyte players_left = -1;
+    for(ubyte x = 0; x < data.subs_count; x++) {
+
+        kill(data.subs[x], SIGTERM);
+        waitpid(data.subs[x], NULL, 0);
+    }
     if(!semtimedop(data.semid, &data.sem->gui_lock,
                    1, &data.sem->timeout)) {
 
@@ -95,13 +112,14 @@ static byte clean_wm() {
         if(semtimedop(data.semid, &data.sem->gui_unlock,
                       1, &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("clean_wm: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
     } else {
-        perror("semtimedop");
+        perror("clean_wm: semtimedop");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    ubyte players_left = -1;
     if(!semtimedop(data.semid, &data.sem->players_count_lock,
                    1, &data.sem->timeout)) {
 
@@ -109,24 +127,25 @@ static byte clean_wm() {
         if(semtimedop(data.semid, &data.sem->players_count_unlock,
                       1, &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("clean_wm: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
-    } else {
-        perror("semtimedop");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    else if(data.code == EXIT_SUCCESS) data.code = errno;
+
     if(data.wm->screen.img) mlx_destroy_image(data.wm->mlx, data.wm->screen.img);
     if(data.wm->win) mlx_destroy_window(data.wm->mlx, data.wm->win);
     if(data.wm->mlx) {
 
+        mlx_loop_end(data.wm->mlx);
+        mlx_set_font(data.wm->mlx, NULL, NULL);
         mlx_destroy_display(data.wm->mlx);
         free(data.wm->mlx);
     }
     free(data.wm);
     if(shmdt(data.shm)) {
 
-        perror("shmdt");
+        perror("clean_wm: shmdt");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
     if(!players_left) clean_ipc();
@@ -148,17 +167,18 @@ byte bye() {
         if(semtimedop(data.semid, &data.sem->gui_unlock, 1,
                       &data.sem->timeout)) {
 
-            perror("semtimedop");
+            perror("bye: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
-    } else {
-        perror("semtimedop");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
+    } else if(data.code == EXIT_SUCCESS) {
+
+        perror("bye: semtimedop");
+        data.code = errno;
     }
     if(data.joined) leave_ipc(&players_left);
     if(shmdt(data.shm)) {
 
-        perror("shmdt");
+        perror("bye: shmdt");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
     if(data.abort) clean_ipc();

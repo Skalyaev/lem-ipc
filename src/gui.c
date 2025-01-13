@@ -12,15 +12,105 @@ void new_pixel(t_img* const screen,
     *(uint*)(screen->addr + ysize + xsize) = color;
 }
 
-static byte put_pixels(t_img* const screen) {
+static void team_info(const int x, const int y, const ushort idx) {
+
+    char name[14] = {0};
+    char player_count[32] = {0};
+
+    t_team* const team = &data.shm->teams[idx];
+    if(strlen(team->name) > 10) {
+
+        strncpy(name, team->name, 10);
+        strcat(name, "...");
+    }
+    else strcpy(name, team->name);
+    sprintf(player_count, "%d", team->players_count);
+
+    mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT);
+    mlx_string_put(data.wm->mlx, data.wm->win, x, y, RGB_WHITE, name);
+
+    mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
+    mlx_string_put(data.wm->mlx, data.wm->win, x, y + 32, RGB_WHITE, player_count);
+    mlx_string_put(data.wm->mlx, data.wm->win, x + GUI_HEADER - 48, y + 32, RGB_WHITE, "+");
+}
+
+static byte draw_text(const int* const xoffset) {
+
+    mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
+    mlx_string_put(data.wm->mlx, data.wm->win,
+                   *xoffset + 70, 32, RGB_WHITE, "LEM IPC");
+
+    if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
+
+        perror("draw_text: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    for(ubyte x = 0; x < data.shm->max_teams; x++)
+        team_info(*xoffset + 20, 76 + (x * 80), x);
+
+    if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)) {
+
+        perror("draw_text: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+}
+
+static void draw_header(const int* const width,
+                        const int* const height) {
+
+    for(ushort y = 0; y < *height; y++) {
+        for(ushort x = *width; x < *width + GUI_HEADER; x++) {
+
+            if(x < *width + 8)
+                new_pixel(&data.wm->screen, x, y, RGB_HEADER_);
+
+            else if(y > 48 && y < 128) {
+
+                if(y > 120) new_pixel(&data.wm->screen, x, y, RGB_RED);
+                else new_pixel(&data.wm->screen, x, y, RGB_RED_);
+            }
+            else if(y > 128 && y < 208) {
+
+                if(y > 200) new_pixel(&data.wm->screen, x, y, RGB_GREEN);
+                else new_pixel(&data.wm->screen, x, y, RGB_GREEN_);
+            }
+            else if(y > 208 && y < 288 && data.shm->max_teams > 2) {
+
+                if(y > 280) new_pixel(&data.wm->screen, x, y, RGB_BLUE);
+                else new_pixel(&data.wm->screen, x, y, RGB_BLUE_);
+            }
+            else if(y > 288 && y < 368 && data.shm->max_teams > 5) {
+
+                if(y > 360) new_pixel(&data.wm->screen, x, y, RGB_CYAN);
+                else new_pixel(&data.wm->screen, x, y, RGB_CYAN_);
+            }
+            else if(y > 368 && y < 448 && data.shm->max_teams > 3) {
+
+                if(y > 440) new_pixel(&data.wm->screen, x, y, RGB_YELLOW);
+                else new_pixel(&data.wm->screen, x, y, RGB_YELLOW_);
+            }
+            else if(y > 448 && y < 528 && data.shm->max_teams > 4) {
+
+                if(y > 520) new_pixel(&data.wm->screen, x, y, RGB_MAGENTA);
+                else new_pixel(&data.wm->screen, x, y, RGB_MAGENTA_);
+            }
+            else new_pixel(&data.wm->screen, x, y, RGB_HEADER);
+        }
+    }
+}
+
+static byte draw_map() {
 
     int map[data.shm->width][data.shm->height];
     memset(map, 0, sizeof(map));
 
     if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
 
+        perror("draw_map: semtimedop");
         data.code = errno;
-        perror("semtimedop");
         return EXIT_FAILURE;
     }
     t_player* player;
@@ -28,14 +118,14 @@ static byte put_pixels(t_img* const screen) {
         for(ushort y = 0; y < data.shm->height; y++) {
 
             player = &data.shm->board[x][y];
-            if(player->team) map[x][y] = player->team->color;
+            if(player->color) map[x][y] = player->color;
             else map[x][y] = RGB_GRAY;
         }
     }
     if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) {
 
+        perror("draw_map: semtimedop");
         data.code = errno;
-        perror("semtimedop");
         return EXIT_FAILURE;
     }
     for(ushort w = 0; w < data.shm->width; w++)
@@ -43,59 +133,89 @@ static byte put_pixels(t_img* const screen) {
 
             for(ushort y = 0; y < PIXEL_SIZE; y++)
                 for(ushort z = 0; z < PIXEL_SIZE; z++)
-                    new_pixel(screen,
+                    new_pixel(&data.wm->screen,
                               w * PIXEL_SIZE + y,
                               x * PIXEL_SIZE + z,
                               map[w][x]);
     return EXIT_SUCCESS;
 }
 
-static int loop() {
+static int loop_hook() {
 
-    put_pixels(&data.wm->screen);
+    const int width = data.shm->width * PIXEL_SIZE;
+    const int height = data.shm->height * PIXEL_SIZE;
+
+    if(draw_map() != EXIT_SUCCESS) exit(bye());
+    draw_header(&width, &height);
+
     mlx_put_image_to_window(data.wm->mlx, data.wm->win,
                             data.wm->screen.img, 0, 0);
-    usleep(100000);
+
+    if(draw_text(&width) != EXIT_SUCCESS) exit(bye());
+    return EXIT_SUCCESS;
+}
+
+static int key_hook(const int key, void* const param) {
+
+    (void)param;
+    if(key == 65307) exit(bye());
+    return EXIT_SUCCESS;
+}
+
+static int mouse_hook(const int button, int x, int y, void* const param) {
+    (void)button;
+    (void)param;
+    const int width = data.shm->width * PIXEL_SIZE;
+
+    mlx_mouse_get_pos(data.wm->mlx, data.wm->win, &x, &y);
+    printf("x: %d, y: %d\n", x, y);
+    if(x > width + 8 && y > 48 && y < 528) {
+
+        if(y > 48 && y <= 128 && add_player(0) != EXIT_SUCCESS) exit(bye());
+        else if(y > 128 && y <= 208 && add_player(1) != EXIT_SUCCESS) exit(bye());
+        else if(y > 208 && y <= 288 && add_player(2) != EXIT_SUCCESS) exit(bye());
+        else if(y > 288 && y <= 368 && add_player(3) != EXIT_SUCCESS) exit(bye());
+        else if(y > 368 && y <= 448 && add_player(4) != EXIT_SUCCESS) exit(bye());
+        else if(y > 448 && y <= 528 && add_player(5) != EXIT_SUCCESS) exit(bye());
+    }
     return EXIT_SUCCESS;
 }
 
 byte draw() {
 
+    bool gui = YES;
     if(semtimedop(data.semid, &data.sem->gui_lock, 1, &data.sem->timeout)) {
 
+        perror("draw: semtimedop");
         data.code = errno;
-        perror("semtimedop");
         return bye();
     }
-    data.shm->gui = YES;
+    if(!data.shm->gui) {
+        gui = NO;
+        data.shm->gui = YES;
+    }
     if(semtimedop(data.semid, &data.sem->gui_unlock, 1, &data.sem->timeout)) {
 
-        data.code = errno;
-        perror("semtimedop");
-        return bye();
-    }
-    const size_t wm_size = sizeof(t_mlx);
-    data.wm = malloc(wm_size);
-    if(!data.wm) {
-
-        perror("malloc");
+        perror("draw: semtimedop");
         data.code = errno;
         return bye();
     }
-    memset(data.wm, 0, wm_size);
+    if(gui) return EXIT_SUCCESS;
 
-    const int width = data.shm->width * PIXEL_SIZE;
+    const int width = data.shm->width * PIXEL_SIZE + GUI_HEADER;
     const int height = data.shm->height * PIXEL_SIZE;
-
-    data.wm->mlx = mlx_init();
-    data.wm->win = mlx_new_window(data.wm->mlx, width, height, "LemIPC");
 
     t_img* screen = &data.wm->screen;
     screen->img = mlx_new_image(data.wm->mlx, width, height);
     screen->addr = mlx_get_data_addr(screen->img, &screen->bpp,
                                      &screen->line_size, &screen->endian);
 
-    mlx_loop_hook(data.wm->mlx, loop, NULL);
+    data.wm->win = mlx_new_window(data.wm->mlx, width, height, "LemIPC");
+
+    mlx_mouse_hook(data.wm->win, mouse_hook, NULL);
+    mlx_key_hook(data.wm->win, key_hook, NULL);
+    mlx_loop_hook(data.wm->mlx, loop_hook, NULL);
+
     mlx_loop(data.wm->mlx);
     return bye();
 }

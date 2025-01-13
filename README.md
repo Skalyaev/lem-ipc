@@ -44,10 +44,11 @@ apt install -y gcc
 ```bash
 cd ~/.local/src
 git clone https://github.com/Skalyaev/lem-ipc.git
-cd lem-ipc && make install && make
+cd lem-ipc && unzip mlx.zip
+make install && make
 
 ln -s $PWD/lem-ipc ~/.local/bin/lem-ipc
 export PATH=~/.local/bin:$PATH
 
-lem-ipc -h
+lem-ipc -g
 ```

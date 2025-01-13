@@ -4,77 +4,10 @@ extern t_lemipc data;
 
 static byte failure(const char* const msg) {
 
-    if(data.first) data.abort = YES;
-    data.code = errno;
     perror(msg);
+    data.code = errno;
+    if(data.first) data.abort = YES;
     return EXIT_FAILURE;
-}
-
-static byte file_init(const char* const path) {
-
-    FILE* file = fopen(path, "r");
-    if(!file) {
-
-        file = fopen(path, "w");
-        if(!file) {
-
-            data.code = errno;
-            perror("fopen");
-            return EXIT_FAILURE;
-        }
-        data.first = YES;
-    }
-    fclose(file);
-    return EXIT_SUCCESS;
-}
-
-static byte shm_init() {
-
-    const size_t shm_size = sizeof(t_shm);
-
-    key_t key = ftok(SHM_PATH, IPC_ID);
-    if(key == -1) {
-
-        if(data.first) {
-            if(remove(SHM_PATH)) perror("remove");
-            if(remove(SEM_PATH)) perror("remove");
-        }
-        data.code = errno;
-        perror("ftok");
-        return EXIT_FAILURE;
-    }
-    if(data.first) {
-
-        data.shmid = shmget(key, shm_size, IPC_CREAT | IPC_EXCL | 0666);
-        if(data.shmid == -1) {
-
-            if(remove(SHM_PATH)) perror("remove");
-            if(remove(SEM_PATH)) perror("remove");
-            data.code = errno;
-            perror("shmget");
-            return EXIT_FAILURE;
-        }
-    } else {
-        for(ubyte x = 0; x < 8; x++) {
-
-            data.shmid = shmget(key, shm_size, 0666);
-            if(data.shmid == -1) sleep(1);
-            else break;
-        }
-    }
-    data.shm = shmat(data.shmid, NULL, 0);
-    if(data.shm == (void*)-1) {
-
-        if(data.first) {
-            if(shmctl(data.shmid, IPC_RMID, NULL)) perror("shmctl");
-            if(remove(SHM_PATH)) perror("remove");
-            if(remove(SEM_PATH)) perror("remove");
-        }
-        data.code = errno;
-        perror("shmat");
-        return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
 }
 
 static void new_sem(t_sembuf* const lock,
@@ -94,17 +27,17 @@ static byte sem_init() {
 
     const size_t sem_size = sizeof(t_sem);
     data.sem = malloc(sem_size);
-    if(!data.sem) return failure("malloc");
+    if(!data.sem) return failure("sem_init: malloc");
 
     memset(data.sem, 0, sem_size);
     data.sem->timeout.tv_sec = 8;
 
     key_t key = ftok(SEM_PATH, IPC_ID);
-    if(key == -1) return failure("ftok");
+    if(key == -1) return failure("sem_init: ftok");
     if(data.first) {
 
         data.semid = semget(key, SEM_COUNT, IPC_CREAT | IPC_EXCL | 0666);
-        if(data.semid == -1) return failure("semget");
+        if(data.semid == -1) return failure("sem_init: semget");
 
         ushort values[SEM_COUNT];
         memset(values, 1, sizeof(values));
@@ -112,7 +45,8 @@ static byte sem_init() {
         t_semun semun = {0};
         semun.array = values;
 
-        if(semctl(data.semid, 0, SETALL, semun) == -1) return failure("semctl");
+        if(semctl(data.semid, 0, SETALL, semun) == -1)
+            return failure("sem_init: semctl");
     } else {
         for(ubyte x = 0; x < 8; x++) {
 
@@ -120,7 +54,7 @@ static byte sem_init() {
             if(data.semid == -1) sleep(1);
             else break;
         }
-        if(data.semid == -1) return failure("semget");
+        if(data.semid == -1) return failure("sem_init: semget");
     }
     new_sem(&data.sem->init_lock,
             &data.sem->init_unlock,
@@ -142,6 +76,83 @@ static byte sem_init() {
             &data.sem->gui_unlock,
             SEM_GUI);
 
+    new_sem(&data.sem->start_lock,
+            &data.sem->start_unlock,
+            SEM_START);
+
+    new_sem(&data.sem->party_lock,
+            &data.sem->party_unlock,
+            SEM_PARTY);
+
+    return EXIT_SUCCESS;
+}
+
+static byte shm_init() {
+
+    const size_t shm_size = sizeof(t_shm);
+
+    key_t key = ftok(SHM_PATH, IPC_ID);
+    if(key == -1) {
+
+        perror("shm_init: ftok");
+        if(data.first) {
+
+            if(remove(SHM_PATH)) perror("shm_init: remove");
+            if(remove(SEM_PATH)) perror("shm_init: remove");
+        }
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    if(data.first) {
+
+        data.shmid = shmget(key, shm_size, IPC_CREAT | IPC_EXCL | 0666);
+        if(data.shmid == -1) {
+
+            perror("shm_init: shmget");
+            if(remove(SHM_PATH)) perror("shm_init: remove");
+            if(remove(SEM_PATH)) perror("shm_init: remove");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+    } else {
+        for(ubyte x = 0; x < 8; x++) {
+
+            data.shmid = shmget(key, shm_size, 0666);
+            if(data.shmid == -1) sleep(1);
+            else break;
+        }
+    }
+    data.shm = shmat(data.shmid, NULL, 0);
+    if(data.shm == (void*)-1) {
+
+        perror("shm_init: shmat");
+        if(data.first) {
+
+            shmctl(data.shmid, IPC_RMID, NULL);
+            if(remove(SHM_PATH)) perror("shm_init: remove");
+            if(remove(SEM_PATH)) perror("shm_init: remove");
+        }
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+}
+
+static byte file_init(const char* const path) {
+
+    FILE* file = fopen(path, "r");
+    if(!file) {
+
+        file = fopen(path, "w");
+        if(!file) {
+
+            perror("file_init: fopen");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        data.first = YES;
+    }
+    fclose(file);
     return EXIT_SUCCESS;
 }
 
@@ -149,9 +160,11 @@ byte init() {
 
     if(file_init(SHM_PATH) != EXIT_SUCCESS) return EXIT_FAILURE;
     if(data.first) {
+
         if(file_init(SEM_PATH) != EXIT_SUCCESS) {
 
-            if(remove(SHM_PATH)) perror("remove");
+            perror("init: file_init");
+            remove(SHM_PATH);
             return EXIT_FAILURE;
         }
     } else {
@@ -172,26 +185,24 @@ byte init() {
 
         while(YES) {
             if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout))
-                return failure("semtimedop");
+                return failure("init: semtimedop");
 
             if(data.shm->initialized) {
                 if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
-                    return failure("semtimedop");
+                    return failure("init: semtimedop");
                 break;
             }
             if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
-                return failure("semtimedop");
-
+                return failure("init: semtimedop");
             sleep(1);
         };
         return EXIT_SUCCESS;
     }
-    const int colors[] = {RGB_RED, RGB_GREEN, RGB_YELLOW, RGB_MAGENTA, RGB_BLUE, RGB_CYAN};
+    const int colors[] = {RGB_RED_, RGB_GREEN_, RGB_BLUE_, RGB_CYAN_, RGB_YELLOW_, RGB_MAGENTA_};
 
-    if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout)) {
-        printf("errno: %d\n", errno);
-        return failure("semtimedop");
-    }
+    if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout))
+        return failure("init: semtimedop");
+
     data.shm->width = data.opt.width;
     data.shm->height = data.opt.height;
     data.shm->max_teams = data.opt.max_teams;
@@ -213,8 +224,8 @@ byte init() {
     data.shm->initialized = YES;
     data.shm->gui = NO;
 
-    if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout)) {
-        return failure("semtimedop");
-    }
+    if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
+        return failure("init: semtimedop");
+
     return EXIT_SUCCESS;
 }

@@ -15,6 +15,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
+#include <sys/wait.h>
 
 #include <mlx.h>
 #include "define.h"
@@ -25,5 +26,15 @@ byte init();
 byte join();
 byte draw();
 byte bye();
+byte player_check();
+byte player_listen();
+byte player_think();
+byte player_communicate();
+byte player_move();
+byte player_log();
+byte add_player(const ubyte team);
+void draw_logo(t_img* const screen, int x, int y);
+void new_pixel(t_img* const screen,
+               const int x, const int y, const int color);
 
 #endif
