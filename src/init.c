@@ -76,10 +76,6 @@ static byte sem_init() {
             &data.sem->gui_unlock,
             SEM_GUI);
 
-    new_sem(&data.sem->start_lock,
-            &data.sem->start_unlock,
-            SEM_START);
-
     new_sem(&data.sem->party_lock,
             &data.sem->party_unlock,
             SEM_PARTY);

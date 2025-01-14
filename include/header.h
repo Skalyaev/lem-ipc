@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <math.h>
+#include <float.h>
 #include <signal.h>
 #include <getopt.h>
 #include <errno.h>
@@ -16,6 +18,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 
 #include <mlx.h>
 #include "define.h"
@@ -36,5 +39,7 @@ byte add_player(const ubyte team);
 void draw_logo(t_img* const screen, int x, int y);
 void new_pixel(t_img* const screen,
                const int x, const int y, const int color);
+byte pause_game();
+byte stop_game();
 
 #endif

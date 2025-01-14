@@ -10,29 +10,16 @@ static byte failure(const char* const msg) {
     return EXIT_FAILURE;
 }
 
-static bool try_cell(ushort* const w, ushort* const x, t_team* const team) {
+static bool try_cell(ushort* const x, ushort* const y, t_team* const team) {
 
-    if(data.shm->board[*w][*x].color) return NO;
-    for(ushort y = 0; y < PLAYER_VOLUME; y++) {
+    if(data.shm->board[*x][*y].id) return NO;
 
-        if(*x + y >= data.shm->height) return NO;
-        for(ushort z = 0; z < PLAYER_VOLUME; z++) {
+    data.self = &data.shm->board[*x][*y];
+    data.self->x = *x;
+    data.self->y = *y;
+    data.self->color = team->color;
+    data.self->id = data.shm->players_count + 1;
 
-            if(*w + z >= data.shm->width) return NO;
-            if(data.shm->board[*w + y][*x + z].color) return NO;
-        }
-    }
-    t_player* player;
-    for(ushort y = 0; y < PLAYER_VOLUME; y++) {
-        for(ushort z = 0; z < PLAYER_VOLUME; z++) {
-
-            player = &data.shm->board[*w + y][*x + z];
-            player->x = *w;
-            player->y = *x;
-            player->color = team->color;
-        }
-    }
-    data.self = player;
     team->players_count++;
     data.shm->players_count++;
     data.joined = YES;
@@ -41,23 +28,25 @@ static bool try_cell(ushort* const w, ushort* const x, t_team* const team) {
 
 static void join_board(t_team* const team) {
 
-    srand(time(NULL) + getpid());
-    ushort x = rand() % data.shm->width;
-    ushort y = rand() % data.shm->height;
+    const ushort board_width = data.shm->width / PLAYER_VOLUME;
+    const ushort board_height = data.shm->height / PLAYER_VOLUME;
 
-    if(x > data.shm->width - PLAYER_VOLUME) x = 0;
-    if(y > data.shm->height - PLAYER_VOLUME) y = 0;
+    srand(time(NULL) + getpid());
+    ushort x = rand() % board_width;
+    ushort y = rand() % board_height;
+
+    if(x > board_width) x = 0;
+    if(y > board_width) y = 0;
 
     if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) return;
     while(YES) {
 
         if(try_cell(&x, &y, team)) break;
-        x += PLAYER_VOLUME;
-        if(x <= data.shm->width - PLAYER_VOLUME) continue;
-
+        x++;
+        if(x <= board_width) continue;
         x = 0;
-        y += PLAYER_VOLUME;
-        if(y > data.shm->height - PLAYER_VOLUME) y = 0;
+        y++;
+        if(y > board_height) y = 0;
     }
     if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) return;
 }
@@ -100,13 +89,39 @@ byte join() {
         semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout);
         return failure("join: semtimedop");
     }
+    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout)) {
+
+        semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout);
+        semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout);
+        semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout);
+        return failure("join: semtimedop");
+    }
     t_team* const team = join_team();
     if(team) join_board(team);
-    if(data.first && !data.joined) data.abort = YES;
+    if(data.joined) {
 
-    if(semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout)
+        bool canstart = NO;
+        for(ubyte x = 0; x < data.shm->max_teams; x++) {
+
+            if(!data.shm->teams[x].name[0]) continue;
+            if(data.shm->teams[x].players_count < 2) continue;
+            canstart = YES;
+            break;
+        }
+        if(canstart && (data.shm->over || !data.shm->started)
+                && data.shm->players_count > 2
+                && data.shm->teams_count > 1) {
+
+            data.shm->started = YES;
+            data.shm->over = NO;
+            gettimeofday(&data.shm->start, NULL);
+        }
+    } else if(data.first) data.abort = YES;
+
+    if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout)
             || semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)
-            || semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
+            || semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout)
+            || semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout))
         return failure("join: semtimedop");
 
     return data.joined ? EXIT_SUCCESS : EXIT_FAILURE;

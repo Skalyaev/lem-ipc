@@ -18,6 +18,7 @@ typedef struct s_team {
 } t_team;
 
 typedef struct s_player {
+    ubyte id;
     ubyte x;
     ubyte y;
     int color;
@@ -34,9 +35,12 @@ typedef struct s_shm {
     ubyte teams_count;
     bool initialized;
     bool gui;
-    t_timespec start;
+    bool started;
     bool paused;
     bool over;
+    t_timeval start;
+    t_timeval pause;
+    t_timeval end;
 } t_shm;
 
 typedef union semun {
@@ -56,8 +60,6 @@ typedef struct s_sem {
     t_sembuf players_count_unlock;
     t_sembuf gui_lock;
     t_sembuf gui_unlock;
-    t_sembuf start_lock;
-    t_sembuf start_unlock;
     t_sembuf party_lock;
     t_sembuf party_unlock;
     t_timespec timeout;
@@ -80,6 +82,7 @@ typedef struct s_mlx {
 typedef struct s_lemipc {
     t_opt opt;
     t_player* self;
+    t_player* target;
     t_shm* shm;
     t_sem* sem;
     t_mlx* wm;
@@ -91,6 +94,8 @@ typedef struct s_lemipc {
     bool joined;
     pid_t subs[MAX_SUBS];
     ushort subs_count;
+    bool is_sub;
+    byte direction[2];
 } t_lemipc;
 
 #endif

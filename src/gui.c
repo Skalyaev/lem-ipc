@@ -34,6 +34,54 @@ static void team_info(const int x, const int y, const ushort idx) {
     mlx_string_put(data.wm->mlx, data.wm->win, x + GUI_HEADER - 48, y + 32, RGB_WHITE, "+");
 }
 
+static void party_info(const bool* const started,
+                       const bool* const paused,
+                       const bool* const over,
+                       const t_timeval* const start,
+                       const t_timeval* const pause,
+                       const t_timeval* const end,
+                       const int x, const int y) {
+
+    static const byte yoff = 42;
+
+    mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT);
+    mlx_string_put(data.wm->mlx, data.wm->win, x, y, RGB_WHITE, "Duration:");
+
+    char time[32] = {0};
+    if(*started) {
+
+        t_timeval now, out;
+        gettimeofday(&now, NULL);
+        if(*over) timersub(end, start, &out);
+        else {
+            t_timeval tmp;
+            timersub(&now, start, &out);
+            if(*paused) {
+
+                timersub(&now, pause, &tmp);
+                timersub(&out, &tmp, &out);
+            }
+        }
+        if(out.tv_sec < 0) out.tv_sec = 0;
+        if(out.tv_usec < 0) out.tv_usec = 0;
+
+        sprintf(time, "%02ld:%02ld", out.tv_sec / 60, out.tv_sec % 60);
+    }
+    else strcpy(time, "00:00");
+
+    mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
+    mlx_string_put(data.wm->mlx, data.wm->win, x + 124, y + 2, RGB_WHITE, time);
+
+    char cmd[32] = {0};
+    if(*paused) strcpy(cmd, "PLAY");
+    else strcpy(cmd, "PAUSE");
+    mlx_string_put(data.wm->mlx, data.wm->win, x, y + yoff, RGB_WHITE, cmd);
+
+    strcpy(cmd, "STOP");
+    int color = *started && !*over ? RGB_WHITE : RGB_GRAY;
+    mlx_string_put(data.wm->mlx, data.wm->win, x + 140, y + yoff, color, cmd);
+}
+
 static byte draw_text(const int* const xoffset) {
 
     mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
@@ -46,7 +94,7 @@ static byte draw_text(const int* const xoffset) {
         data.code = errno;
         return EXIT_FAILURE;
     }
-    for(ubyte x = 0; x < data.shm->max_teams; x++)
+    for(ushort x = 0; x < data.shm->max_teams; x++)
         team_info(*xoffset + 20, 76 + (x * 80), x);
 
     if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)) {
@@ -55,6 +103,27 @@ static byte draw_text(const int* const xoffset) {
         data.code = errno;
         return EXIT_FAILURE;
     }
+    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout)) {
+
+        perror("draw_text: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    bool started = data.shm->started;
+    bool paused = data.shm->paused;
+    bool over = data.shm->over;
+    t_timeval start = data.shm->start;
+    t_timeval pause = data.shm->pause;
+    t_timeval end = data.shm->end;
+
+    if(semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout)) {
+
+        perror("draw_text: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    party_info(&started, &paused, &over, &start, &pause, &end,
+               *xoffset + 20, 88 + (data.shm->max_teams * 80));
     return EXIT_SUCCESS;
 }
 
@@ -104,7 +173,11 @@ static void draw_header(const int* const width,
 
 static byte draw_map() {
 
-    int map[data.shm->width][data.shm->height];
+    static const ushort pixel_size = PIXEL_SIZE * PLAYER_VOLUME;
+    const ushort board_width = data.shm->width / PLAYER_VOLUME;
+    const ushort board_height = data.shm->height / PLAYER_VOLUME;
+
+    int map[board_width][board_height];
     memset(map, 0, sizeof(map));
 
     if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
@@ -114,12 +187,12 @@ static byte draw_map() {
         return EXIT_FAILURE;
     }
     t_player* player;
-    for(ushort x = 0; x < data.shm->width; x++) {
-        for(ushort y = 0; y < data.shm->height; y++) {
+    for(ushort x = 0; x < board_width; x++) {
+        for(ushort y = 0; y < board_height; y++) {
 
             player = &data.shm->board[x][y];
             if(player->color) map[x][y] = player->color;
-            else map[x][y] = RGB_GRAY;
+            else map[x][y] = RGB_GRAY_D;
         }
     }
     if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) {
@@ -128,14 +201,14 @@ static byte draw_map() {
         data.code = errno;
         return EXIT_FAILURE;
     }
-    for(ushort w = 0; w < data.shm->width; w++)
-        for(ushort x = 0; x < data.shm->height; x++)
+    for(ushort w = 0; w < board_width; w++)
+        for(ushort x = 0; x < board_height; x++)
 
-            for(ushort y = 0; y < PIXEL_SIZE; y++)
-                for(ushort z = 0; z < PIXEL_SIZE; z++)
+            for(ushort y = 0; y < pixel_size; y++)
+                for(ushort z = 0; z < pixel_size; z++)
                     new_pixel(&data.wm->screen,
-                              w * PIXEL_SIZE + y,
-                              x * PIXEL_SIZE + z,
+                              w * pixel_size + y,
+                              x * pixel_size + z,
                               map[w][x]);
     return EXIT_SUCCESS;
 }
@@ -168,15 +241,22 @@ static int mouse_hook(const int button, int x, int y, void* const param) {
     const int width = data.shm->width * PIXEL_SIZE;
 
     mlx_mouse_get_pos(data.wm->mlx, data.wm->win, &x, &y);
-    printf("x: %d, y: %d\n", x, y);
-    if(x > width + 8 && y > 48 && y < 528) {
+    if(x > width + 8) {
 
-        if(y > 48 && y <= 128 && add_player(0) != EXIT_SUCCESS) exit(bye());
-        else if(y > 128 && y <= 208 && add_player(1) != EXIT_SUCCESS) exit(bye());
-        else if(y > 208 && y <= 288 && add_player(2) != EXIT_SUCCESS) exit(bye());
-        else if(y > 288 && y <= 368 && add_player(3) != EXIT_SUCCESS) exit(bye());
-        else if(y > 368 && y <= 448 && add_player(4) != EXIT_SUCCESS) exit(bye());
-        else if(y > 448 && y <= 528 && add_player(5) != EXIT_SUCCESS) exit(bye());
+        if(y > 48 && y < 528) {
+
+            if(y > 48 && y <= 128 && add_player(0) != EXIT_SUCCESS) exit(bye());
+            else if(y > 128 && y <= 208 && add_player(1) != EXIT_SUCCESS) exit(bye());
+            else if(y > 208 && y <= 288 && add_player(2) != EXIT_SUCCESS) exit(bye());
+            else if(y > 288 && y <= 368 && add_player(3) != EXIT_SUCCESS) exit(bye());
+            else if(y > 368 && y <= 448 && add_player(4) != EXIT_SUCCESS) exit(bye());
+            else if(y > 448 && y <= 528 && add_player(5) != EXIT_SUCCESS) exit(bye());
+        }
+        else if(y > 588 && y < 624) {
+
+            if(x < width + 100 && pause_game() != EXIT_SUCCESS) exit(bye());
+            else if(x > width + 152 && x < width + 228 && stop_game() != EXIT_SUCCESS) exit(bye());
+        }
     }
     return EXIT_SUCCESS;
 }

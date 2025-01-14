@@ -58,7 +58,31 @@ int main(int ac, char** av) {
 
     if(join() != EXIT_SUCCESS) return bye();
     ubyte idx = 0;
+    bool loop;
     while(YES) {
+
+        loop = YES;
+        if(semtimedop(data.semid, &data.sem->party_lock,
+                      1, &data.sem->timeout)) {
+
+            perror("main: semtimedop");
+            data.code = errno;
+            return bye();
+        }
+        if(!data.shm->started || data.shm->paused || data.shm->over) {
+
+            loop = NO;
+            usleep(100000);
+        }
+        if(semtimedop(data.semid, &data.sem->party_unlock,
+                      1, &data.sem->timeout)) {
+
+            perror("main: semtimedop");
+            data.code = errno;
+            return bye();
+        }
+        if(!loop) continue;
+
         if(player_check() != EXIT_SUCCESS) return bye();
         if(player_listen() != EXIT_SUCCESS) return bye();
         if(player_think() != EXIT_SUCCESS) return bye();

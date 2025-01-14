@@ -9,21 +9,16 @@
 #define SEM_PATH "/tmp/lemipc-sem"
 #define CMD "./lemipc %s"
 
-#define SEM_COUNT 8
+#define SEM_COUNT 7
 #define SEM_INIT 1
 #define SEM_BOARD 2
 #define SEM_TEAMS 3
 #define SEM_PLAYERS_COUNT 4
 #define SEM_GUI 5
-#define SEM_START 6
-#define SEM_PARTY 7
+#define SEM_PARTY 6
 
 #define PIXEL_SIZE 10
 #define PLAYER_VOLUME 2
-
-#define GUI_HEADER 240
-#define GUI_FONT_HEAD "-*-courier-medium-r-*-*-24-240-*-*-*-*-*-*"
-#define GUI_FONT "-*-courier-medium-r-*-*-18-180-*-*-*-*-*-*"
 
 #define MAX_WIDTH 132
 #define MAX_HEIGHT 88
@@ -35,9 +30,15 @@
 #define NAME_SIZE_ 31
 #define COLOR_SIZE 16
 
+#define FLED_DISTANCE 8
+
 #define RESET "\033[0m"
 #define RED "\033[31m"
 #define GREEN "\033[32m"
+
+#define GUI_HEADER 24 * PIXEL_SIZE
+#define GUI_FONT_HEAD "-*-courier-medium-r-*-*-24-240-*-*-*-*-*-*"
+#define GUI_FONT "-*-courier-medium-r-*-*-18-180-*-*-*-*-*-*"
 
 #define RGB_RED 0x00CC8888
 #define RGB_RED_ 0x00CC4444
@@ -53,7 +54,9 @@
 #define RGB_MAGENTA_ 0x00CC44CC
 
 #define RGB_BLACK 0x00000000
-#define RGB_GRAY 0x00111111
+#define RGB_GRAY_D 0x00111111
+#define RGB_GRAY 0x00777777
+#define RGB_GRAY_L 0x00EEEEEE
 #define RGB_WHITE 0x00FFFFFF
 
 #define RGB_HEADER 0x00333333
@@ -84,7 +87,8 @@ typedef unsigned short ushort;
 typedef struct option t_option;
 typedef struct semid_ds t_semid_ds;
 typedef struct sembuf t_sembuf;
-typedef struct timespec t_timespec;
 typedef struct winsize t_winsize;
+typedef struct timespec t_timespec;
+typedef struct timeval t_timeval;
 
 #endif

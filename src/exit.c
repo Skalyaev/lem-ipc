@@ -45,6 +45,7 @@ static void leave_ipc(ubyte* const players_left) {
         if(data.first) data.abort = YES;
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    bool canstop = YES;
     if(!semtimedop(data.semid, &data.sem->teams_lock,
                    1, &data.sem->timeout)) {
 
@@ -57,7 +58,7 @@ static void leave_ipc(ubyte* const players_left) {
                 team = &data.shm->teams[x];
                 break;
             }
-            if(data.shm->teams[x].players_count)continue;
+            if(data.shm->teams[x].players_count) continue;
             data.shm->teams_count--;
             memset(data.shm->teams[x].name, 0, NAME_SIZE);
         }
@@ -73,6 +74,13 @@ static void leave_ipc(ubyte* const players_left) {
             perror("leave_ipc: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
+        for(ubyte x = 0; x < data.shm->max_teams; x++) {
+
+            if(!data.shm->teams[x].name[0]) continue;
+            if(data.shm->teams[x].players_count < 2) continue;
+            canstop = NO;
+            break;
+        }
     } else {
         perror("leave_ipc: semtimedop");
         if(data.first) data.abort = YES;
@@ -81,10 +89,8 @@ static void leave_ipc(ubyte* const players_left) {
     if(!semtimedop(data.semid, &data.sem->board_lock,
                    1, &data.sem->timeout)) {
 
-        for(ushort x = data.self->x; x < data.self->x + PLAYER_VOLUME; x++)
-            for(ushort y = data.self->y; y < data.self->y + PLAYER_VOLUME; y++)
-                data.shm->board[x][y].color = 0;
-
+        data.self->id = 0;
+        data.self->color = 0;
         if(semtimedop(data.semid, &data.sem->board_unlock,
                       1, &data.sem->timeout)) {
 
@@ -96,42 +102,63 @@ static void leave_ipc(ubyte* const players_left) {
         if(data.first) data.abort = YES;
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    if(!canstop) return;
+    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout)) {
+
+        perror("leave_ipc: semtimedop");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+        return;
+    }
+    if(data.shm->started && !data.shm->over) {
+
+        gettimeofday(&data.shm->end, NULL);
+        data.shm->over = YES;
+    }
+    if(semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout)) {
+
+        perror("leave_ipc: semtimedop");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+        return;
+    }
 }
 
 static byte clean_wm() {
 
-    for(ubyte x = 0; x < data.subs_count; x++) {
-
-        kill(data.subs[x], SIGTERM);
-        waitpid(data.subs[x], NULL, 0);
-    }
-    if(!semtimedop(data.semid, &data.sem->gui_lock,
-                   1, &data.sem->timeout)) {
-
-        data.shm->gui = NO;
-        if(semtimedop(data.semid, &data.sem->gui_unlock,
-                      1, &data.sem->timeout)) {
-
-            perror("clean_wm: semtimedop");
-            if(data.code == EXIT_SUCCESS) data.code = errno;
-        }
-    } else {
-        perror("clean_wm: semtimedop");
-        if(data.code == EXIT_SUCCESS) data.code = errno;
-    }
     ubyte players_left = -1;
-    if(!semtimedop(data.semid, &data.sem->players_count_lock,
-                   1, &data.sem->timeout)) {
+    if(!data.is_sub) {
 
-        players_left = data.shm->players_count;
-        if(semtimedop(data.semid, &data.sem->players_count_unlock,
-                      1, &data.sem->timeout)) {
+        for(ubyte x = 0; x < data.subs_count; x++) {
 
+            kill(data.subs[x], SIGTERM);
+            waitpid(data.subs[x], NULL, 0);
+        }
+        if(!semtimedop(data.semid, &data.sem->gui_lock,
+                       1, &data.sem->timeout)) {
+
+            data.shm->gui = NO;
+            if(semtimedop(data.semid, &data.sem->gui_unlock,
+                          1, &data.sem->timeout)) {
+
+                perror("clean_wm: semtimedop");
+                if(data.code == EXIT_SUCCESS) data.code = errno;
+            }
+        } else {
             perror("clean_wm: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
         }
+        if(!semtimedop(data.semid, &data.sem->players_count_lock,
+                       1, &data.sem->timeout)) {
+
+            players_left = data.shm->players_count;
+            if(semtimedop(data.semid, &data.sem->players_count_unlock,
+                          1, &data.sem->timeout)) {
+
+                perror("clean_wm: semtimedop");
+                if(data.code == EXIT_SUCCESS) data.code = errno;
+            }
+        } else if(data.code == EXIT_SUCCESS) data.code = errno;
     }
-    else if(data.code == EXIT_SUCCESS) data.code = errno;
+    else leave_ipc(&players_left);
 
     if(data.wm->screen.img) mlx_destroy_image(data.wm->mlx, data.wm->screen.img);
     if(data.wm->win) mlx_destroy_window(data.wm->mlx, data.wm->win);
@@ -148,7 +175,7 @@ static byte clean_wm() {
         perror("clean_wm: shmdt");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
-    if(!players_left) clean_ipc();
+    if(!data.is_sub && !players_left) clean_ipc();
     if(data.sem) free(data.sem);
     return data.code;
 }
