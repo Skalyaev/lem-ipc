@@ -52,6 +52,7 @@ static void party_info(const bool* const started,
 
         t_timeval now, out;
         gettimeofday(&now, NULL);
+
         if(*over) timersub(end, start, &out);
         else {
             t_timeval tmp;
@@ -70,7 +71,7 @@ static void party_info(const bool* const started,
     else strcpy(time, "00:00");
 
     mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
-    mlx_string_put(data.wm->mlx, data.wm->win, x + 124, y + 2, RGB_WHITE, time);
+    mlx_string_put(data.wm->mlx, data.wm->win, x + 132, y + 2, RGB_WHITE, time);
 
     char cmd[32] = {0};
     if(*paused) strcpy(cmd, "PLAY");
@@ -86,7 +87,7 @@ static byte draw_text(const int* const xoffset) {
 
     mlx_set_font(data.wm->mlx, data.wm->win, GUI_FONT_HEAD);
     mlx_string_put(data.wm->mlx, data.wm->win,
-                   *xoffset + 70, 32, RGB_WHITE, "LEM IPC");
+                   *xoffset + 76, 32, RGB_WHITE, "LEM IPC");
 
     if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
 
@@ -112,6 +113,7 @@ static byte draw_text(const int* const xoffset) {
     bool started = data.shm->started;
     bool paused = data.shm->paused;
     bool over = data.shm->over;
+
     t_timeval start = data.shm->start;
     t_timeval pause = data.shm->pause;
     t_timeval end = data.shm->end;
@@ -225,6 +227,7 @@ static int loop_hook() {
                             data.wm->screen.img, 0, 0);
 
     if(draw_text(&width) != EXIT_SUCCESS) exit(bye());
+    usleep(100000);
     return EXIT_SUCCESS;
 }
 
@@ -255,7 +258,8 @@ static int mouse_hook(const int button, int x, int y, void* const param) {
         else if(y > 588 && y < 624) {
 
             if(x < width + 100 && pause_game() != EXIT_SUCCESS) exit(bye());
-            else if(x > width + 152 && x < width + 228 && stop_game() != EXIT_SUCCESS) exit(bye());
+            else if(x > width + 152 && x < width + 228
+                    && stop_game() != EXIT_SUCCESS) exit(bye());
         }
     }
     return EXIT_SUCCESS;

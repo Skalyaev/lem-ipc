@@ -27,6 +27,7 @@
 
 void getargs(const int ac, char** const av);
 byte init();
+byte file_init(const char* const path);
 byte join();
 byte draw();
 byte bye();

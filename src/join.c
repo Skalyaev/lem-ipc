@@ -67,8 +67,32 @@ static t_team* join_team() {
 
         if(data.shm->teams[x].name[0]) continue;
         strcpy(data.shm->teams[x].name, data.opt.team);
+
         team = &data.shm->teams[x];
         data.shm->teams_count++;
+
+        char path[64] = {0};
+        sprintf(path, MSG_PATH, x);
+        if(file_init(path) != EXIT_SUCCESS) {
+
+            perror("join_team: file_init");
+            remove(path);
+            return NULL;
+        }
+        key_t key = ftok(path, IPC_ID);
+        if(key == -1) {
+
+            perror("join_team: ftok");
+            remove(path);
+            return NULL;
+        }
+        team->msgid = msgget(key, IPC_CREAT | 0666);
+        if(team->msgid == -1) {
+
+            perror("join_team: msgget");
+            remove(path);
+            return NULL;
+        }
         break;
     }
     return team;

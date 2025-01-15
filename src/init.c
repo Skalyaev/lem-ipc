@@ -10,27 +10,6 @@ static byte failure(const char* const msg) {
     return EXIT_FAILURE;
 }
 
-static byte msg_init() {
-
-    key_t key = ftok(MSG_PATH, IPC_ID);
-    if(key == -1) return failure("msg_init: ftok");
-
-    if(data.first) {
-
-        data.msgid = msgget(key, IPC_CREAT | IPC_EXCL | 0666);
-        if(data.msgid == -1) return failure("msg_init: msgget");
-    } else {
-        for(ubyte x = 0; x < 8; x++) {
-
-            data.msgid = msgget(key, 0666);
-            if(data.msgid == -1) sleep(1);
-            else break;
-        }
-        if(data.msgid == -1) return failure("msg_init: msgget");
-    }
-    return EXIT_SUCCESS;
-}
-
 static void new_sem(t_sembuf* const lock,
                     t_sembuf* const unlock,
                     const ushort semnum) {
@@ -160,11 +139,10 @@ static byte shm_init() {
     return EXIT_SUCCESS;
 }
 
-static byte file_init(const char* const path) {
+byte file_init(const char* const path) {
 
     FILE* file = fopen(path, "r");
     if(!file) {
-
         file = fopen(path, "w");
         if(!file) {
 
@@ -212,7 +190,6 @@ byte init() {
     }
     if(shm_init() != EXIT_SUCCESS) return EXIT_FAILURE;
     if(sem_init() != EXIT_SUCCESS) return EXIT_FAILURE;
-    if(msg_init() != EXIT_SUCCESS) return EXIT_FAILURE;
     if(!data.first) {
 
         while(YES) {

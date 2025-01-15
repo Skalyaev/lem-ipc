@@ -12,6 +12,7 @@ typedef struct opt {
 } t_opt;
 
 typedef struct s_team {
+    int msgid;
     ubyte ids[MAX_PLAYERS];
     char name[NAME_SIZE];
     int color;
@@ -95,7 +96,6 @@ typedef struct s_lemipc {
     t_mlx* wm;
     int shmid;
     int semid;
-    int msgid;
     byte code;
     bool first;
     bool abort;

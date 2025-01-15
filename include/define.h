@@ -7,7 +7,7 @@
 #define IPC_ID 42
 #define SHM_PATH "/tmp/lemipc-shm"
 #define SEM_PATH "/tmp/lemipc-sem"
-#define MSG_PATH "/tmp/lemipc-msg"
+#define MSG_PATH "/tmp/lemipc-msg-%d"
 #define CMD "./lemipc %s"
 
 #define SEM_COUNT 7
@@ -39,8 +39,8 @@
 #define GREEN "\033[32m"
 
 #define GUI_HEADER 24 * PIXEL_SIZE
-#define GUI_FONT_HEAD "-*-courier-medium-r-*-*-24-240-*-*-*-*-*-*"
-#define GUI_FONT "-*-courier-medium-r-*-*-18-180-*-*-*-*-*-*"
+#define GUI_FONT_HEAD "-*-clean-*-*-*-*-24-240-*-*-*-*-*-*"
+#define GUI_FONT "-*-clean-*-*-*-*-20-200-*-*-*-*-*-*"
 
 #define RGB_RED 0x00CC8888
 #define RGB_RED_ 0x00CC4444

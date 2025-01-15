@@ -19,6 +19,35 @@ byte add_player(const ubyte teamidx) {
 
         sprintf(team->name, "team%d", teamidx + 1);
         data.shm->teams_count++;
+
+        char path[64] = {0};
+        sprintf(path, MSG_PATH, teamidx + 1);
+        printf("path: %s\n", path);
+        if(file_init(path) != EXIT_SUCCESS) {
+
+            perror("add_player: file_init");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        key_t key = ftok(path, IPC_ID);
+        if(key == -1){
+
+            remove(path);
+            perror("add_player: ftok");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        printf("key created\n");
+
+        team->msgid = msgget(key, IPC_CREAT | 0666);
+        if(team->msgid == -1){
+
+            remove(path);
+            perror("add_player: msgget");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        printf("msgid created\n");
     }
     strcpy(name, team->name);
     if(semtimedop(data.semid, &data.sem->teams_unlock,

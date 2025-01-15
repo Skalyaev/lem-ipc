@@ -7,9 +7,21 @@ byte player_check() {
     const ubyte board_width = data.shm->width / PLAYER_VOLUME;
     const ubyte board_height = data.shm->height / PLAYER_VOLUME;
 
-    const ubyte x = data.self->x > 0 ? data.self->x - 1 : 0;
-    const ubyte y = data.self->y > 0 ? data.self->y - 1 : 0;
-
+    ubyte x, y, xVol, yVol;
+    if(data.self->x > 0){
+        x = data.self->x - 1;
+        xVol = 3;
+    }else{
+        x = 0;
+        xVol = 2;
+    }
+    if(data.self->y > 0){
+        y = data.self->y - 1;
+        yVol = 3;
+    }else{
+        y = 0;
+        yVol = 2;
+    }
     t_player* player[MAX_PLAYERS] = {0};
     ushort idx = 0;
     bool down = NO;
@@ -23,8 +35,8 @@ byte player_check() {
         return EXIT_FAILURE;
     }
     t_player* cell;
-    for(ubyte xx = 0; xx < 3; xx++) {
-        for(ubyte yy = 0; yy < 3; yy++) {
+    for(ubyte xx = 0; xx < xVol; xx++) {
+        for(ubyte yy = 0; yy < yVol; yy++) {
 
             if(x + xx >= board_width) continue;
             if(y + yy >= board_height) continue;
@@ -67,8 +79,8 @@ byte player_check() {
 byte player_think() {
 
     t_team* team = NULL;
-    if(semtimedop(data.semid, &data.sem->teams_lock, 1,
-                  &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->teams_lock,
+                  1, &data.sem->timeout)) {
 
         perror("player_think: semtimedop");
         data.code = errno;
@@ -143,14 +155,13 @@ byte player_think() {
             if(distance < FLED_DISTANCE) fled = YES;
         }
     }
+    ushort new_x, new_y;
     if(data.target.id) {
 
         distance = sqrt(pow(data.self->x - data.target.x, 2)
                         + pow(data.self->y - data.target.y, 2));
         if(distance <= min_distance + 2) fled = NO;
-    }
-    ushort new_x, new_y;
-    if(!fled) {
+
         float best_distance = FLT_MAX;
         for(ubyte i = 0; i < 5; i++) {
 
@@ -158,7 +169,8 @@ byte player_think() {
             new_y = data.self->y + directions[i][1];
 
             if(new_x >= board_width || new_y >= board_height) continue;
-            if(directions[i][0] && directions[i][1] && board[new_x][new_y].id) continue;
+            if(directions[i][0] && directions[i][1] && board[new_x][new_y].id)
+                continue;
 
             distance = sqrt(pow(data.target.x - new_x, 2)
                             + pow(data.target.y - new_y, 2));
@@ -171,6 +183,8 @@ byte player_think() {
         }
         return EXIT_SUCCESS;
     }
+    if(!fled) return EXIT_SUCCESS;
+
     float max_distance = 0.0;
     for(ubyte idx = 0; idx < 5; idx++) {
 
@@ -196,7 +210,7 @@ byte player_think() {
 byte player_communicate() {
 
     t_team teams[MAX_TEAMS] = {0};
-    const size_t team_size = sizeof(teams);
+    static const size_t team_size = sizeof(teams);
 
     if(semtimedop(data.semid, &data.sem->teams_lock,
                   1, &data.sem->timeout)) {
@@ -205,7 +219,6 @@ byte player_communicate() {
         data.code = errno;
         return EXIT_FAILURE;
     }
-    printf("player_communicate: locked teams semaphore\n");
     memcpy(teams, data.shm->teams, team_size);
 
     if(semtimedop(data.semid, &data.sem->teams_unlock,
@@ -215,46 +228,42 @@ byte player_communicate() {
         data.code = errno;
         return EXIT_FAILURE;
     }
-    printf("player_communicate: unlocked teams semaphore\n");
     data.target.id = 0;
     t_msg msg = {0};
     sprintf(msg.text, "%d %d", data.nearest.x, data.nearest.y);
 
     t_team* team = NULL;
-    ubyte team_idx = -1;
     ubyte self_idx = -1;
     for(ubyte x = 0; x < data.shm->max_teams; x++) {
 
         team = &teams[x];
         if(!team->name[0]) continue;
-        if(strcmp(team->name, data.opt.team)) continue;
+        if(data.self->color != team->color) continue;
         if(team->players_count < 2) return EXIT_SUCCESS;
 
         for(ubyte y = 0; y < team->players_count; y++) {
 
-            if(team->ids[y] == data.self->id) self_idx = y;
-            msg.type = x + 1 + y;
-            if(msgsnd(data.msgid, &msg, MSG_SIZE, IPC_NOWAIT) != -1) continue;
+            if(team->ids[y] == data.self->id) self_idx = y + 1;
+            msg.type = y + 1;
+
+            if(msgsnd(team->msgid, &msg, MSG_SIZE, IPC_NOWAIT) != -1) continue;
             if(errno == EAGAIN) {
 
                 for(ubyte z = team->players_count; z < MAX_PLAYERS; z++)
-                    msgrcv(data.msgid, &msg, MSG_SIZE, x + 1 + z, IPC_NOWAIT);
+                    msgrcv(team->msgid, &msg, MSG_SIZE, z + 1, IPC_NOWAIT);
                 continue;
             }
-            perror("player_communicate: msgsnd");
             data.code = errno;
             return EXIT_FAILURE;
         }
-        team_idx = x;
         break;
     }
-    printf("player_communicate: all messages sent\n");
     char positions[MAX_PLAYERS][MSG_SIZE] = {0};
     ubyte count = 0;
     for(ubyte y = 0; y < team->players_count; y++) {
 
-        if(msgrcv(data.msgid, &msg, MSG_SIZE,
-                  team_idx + 1 + self_idx, IPC_NOWAIT) == -1) {
+        if(msgrcv(team->msgid, &msg, MSG_SIZE,
+                  self_idx, IPC_NOWAIT) == -1) {
 
             if(errno == ENOMSG) continue;
             perror("player_communicate: msgrcv");
@@ -264,7 +273,6 @@ byte player_communicate() {
         strcpy(positions[y], msg.text);
         count++;
     }
-    printf("player_communicate: all messages received\n");
     if(!count) return EXIT_SUCCESS;
 
     int px[MAX_PLAYERS] = {0};
