@@ -14,6 +14,11 @@ static void clean_ipc() {
         perror("clean_ipc: semctl");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    if(data.msgid > 0 && msgctl(data.msgid, IPC_RMID, NULL)) {
+
+        perror("clean_ipc: msgctl");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
     if(access(SHM_PATH, F_OK) == 0 && remove(SHM_PATH)) {
 
         perror("clean_ipc: remove");
@@ -24,15 +29,22 @@ static void clean_ipc() {
         perror("clean_ipc: remove");
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
+    if(access(MSG_PATH, F_OK) == 0 && remove(MSG_PATH)) {
+
+        perror("clean_ipc: remove");
+        if(data.code == EXIT_SUCCESS) data.code = errno;
+    }
 }
 
 static void leave_ipc(ubyte* const players_left) {
 
+    bool canstop = NO;
     if(!semtimedop(data.semid, &data.sem->players_count_lock,
                    1, &data.sem->timeout)) {
 
         data.shm->players_count--;
         *players_left = data.shm->players_count;
+        if(data.shm->players_count < 3) canstop = YES;
 
         if(semtimedop(data.semid, &data.sem->players_count_unlock,
                       1, &data.sem->timeout)) {
@@ -45,7 +57,6 @@ static void leave_ipc(ubyte* const players_left) {
         if(data.first) data.abort = YES;
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
-    bool canstop = YES;
     if(!semtimedop(data.semid, &data.sem->teams_lock,
                    1, &data.sem->timeout)) {
 
@@ -62,24 +73,29 @@ static void leave_ipc(ubyte* const players_left) {
             data.shm->teams_count--;
             memset(data.shm->teams[x].name, 0, NAME_SIZE);
         }
+        for(ubyte x = 0; x < team->players_count; x++) {
+
+            if(team->ids[x] != data.self->id) continue;
+            ubyte y = x;
+
+            for(; y < team->players_count - 1; y++)
+                team->ids[y] = team->ids[y + 1];
+
+            team->ids[y] = 0;
+            break;
+        }
         team->players_count--;
         if(!team->players_count) {
 
             memset(team->name, 0, NAME_SIZE);
             data.shm->teams_count--;
+            if(data.shm->teams_count < 2) canstop = YES;
         }
         if(semtimedop(data.semid, &data.sem->teams_unlock,
                       1, &data.sem->timeout)) {
 
             perror("leave_ipc: semtimedop");
             if(data.code == EXIT_SUCCESS) data.code = errno;
-        }
-        for(ubyte x = 0; x < data.shm->max_teams; x++) {
-
-            if(!data.shm->teams[x].name[0]) continue;
-            if(data.shm->teams[x].players_count < 2) continue;
-            canstop = NO;
-            break;
         }
     } else {
         perror("leave_ipc: semtimedop");
@@ -103,7 +119,8 @@ static void leave_ipc(ubyte* const players_left) {
         if(data.code == EXIT_SUCCESS) data.code = errno;
     }
     if(!canstop) return;
-    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->party_lock,
+                  1, &data.sem->timeout)) {
 
         perror("leave_ipc: semtimedop");
         if(data.code == EXIT_SUCCESS) data.code = errno;
@@ -114,7 +131,8 @@ static void leave_ipc(ubyte* const players_left) {
         gettimeofday(&data.shm->end, NULL);
         data.shm->over = YES;
     }
-    if(semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->party_unlock,
+                  1, &data.sem->timeout)) {
 
         perror("leave_ipc: semtimedop");
         if(data.code == EXIT_SUCCESS) data.code = errno;

@@ -17,6 +17,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
+#include <sys/msg.h>
 #include <sys/wait.h>
 #include <sys/time.h>
 
@@ -30,7 +31,6 @@ byte join();
 byte draw();
 byte bye();
 byte player_check();
-byte player_listen();
 byte player_think();
 byte player_communicate();
 byte player_move();

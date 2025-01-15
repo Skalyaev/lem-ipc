@@ -12,6 +12,7 @@ typedef struct opt {
 } t_opt;
 
 typedef struct s_team {
+    ubyte ids[MAX_PLAYERS];
     char name[NAME_SIZE];
     int color;
     ubyte players_count;
@@ -79,15 +80,22 @@ typedef struct s_mlx {
     t_img screen;
 } t_mlx;
 
+typedef struct msg {
+    long type;
+    char text[MSG_SIZE];
+} t_msg;
+
 typedef struct s_lemipc {
     t_opt opt;
     t_player* self;
-    t_player* target;
+    t_player target;
+    t_player nearest;
     t_shm* shm;
     t_sem* sem;
     t_mlx* wm;
     int shmid;
     int semid;
+    int msgid;
     byte code;
     bool first;
     bool abort;

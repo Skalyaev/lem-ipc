@@ -71,6 +71,7 @@ int main(int ac, char** av) {
         }
         if(!data.shm->started || data.shm->paused || data.shm->over) {
 
+            printf("Waiting for game to start...\n");
             loop = NO;
             usleep(100000);
         }
@@ -83,10 +84,13 @@ int main(int ac, char** av) {
         }
         if(!loop) continue;
 
+        printf("Player %d is checking...\n", data.self->id);
         if(player_check() != EXIT_SUCCESS) return bye();
-        if(player_listen() != EXIT_SUCCESS) return bye();
+        printf("Player %d is thinking...\n", data.self->id);
         if(player_think() != EXIT_SUCCESS) return bye();
+        printf("Player %d is communicating...\n", data.self->id);
         if(player_communicate() != EXIT_SUCCESS) return bye();
+        printf("Player %d is moving...\n", data.self->id);
         if(player_move() != EXIT_SUCCESS) return bye();
         if(!data.opt.quiet) {
 

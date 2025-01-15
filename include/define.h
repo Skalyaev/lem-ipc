@@ -7,6 +7,7 @@
 #define IPC_ID 42
 #define SHM_PATH "/tmp/lemipc-shm"
 #define SEM_PATH "/tmp/lemipc-sem"
+#define MSG_PATH "/tmp/lemipc-msg"
 #define CMD "./lemipc %s"
 
 #define SEM_COUNT 7
@@ -26,6 +27,7 @@
 #define MAX_PLAYERS 36
 #define MAX_SUBS 1024
 
+#define MSG_SIZE 256
 #define NAME_SIZE 32
 #define NAME_SIZE_ 31
 #define COLOR_SIZE 16

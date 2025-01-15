@@ -10,6 +10,27 @@ static byte failure(const char* const msg) {
     return EXIT_FAILURE;
 }
 
+static byte msg_init() {
+
+    key_t key = ftok(MSG_PATH, IPC_ID);
+    if(key == -1) return failure("msg_init: ftok");
+
+    if(data.first) {
+
+        data.msgid = msgget(key, IPC_CREAT | IPC_EXCL | 0666);
+        if(data.msgid == -1) return failure("msg_init: msgget");
+    } else {
+        for(ubyte x = 0; x < 8; x++) {
+
+            data.msgid = msgget(key, 0666);
+            if(data.msgid == -1) sleep(1);
+            else break;
+        }
+        if(data.msgid == -1) return failure("msg_init: msgget");
+    }
+    return EXIT_SUCCESS;
+}
+
 static void new_sem(t_sembuf* const lock,
                     t_sembuf* const unlock,
                     const ushort semnum) {
@@ -26,6 +47,7 @@ static void new_sem(t_sembuf* const lock,
 static byte sem_init() {
 
     const size_t sem_size = sizeof(t_sem);
+
     data.sem = malloc(sem_size);
     if(!data.sem) return failure("sem_init: malloc");
 
@@ -95,6 +117,7 @@ static byte shm_init() {
 
             if(remove(SHM_PATH)) perror("shm_init: remove");
             if(remove(SEM_PATH)) perror("shm_init: remove");
+            if(remove(MSG_PATH)) perror("shm_init: remove");
         }
         data.code = errno;
         return EXIT_FAILURE;
@@ -105,9 +128,11 @@ static byte shm_init() {
         if(data.shmid == -1) {
 
             perror("shm_init: shmget");
+            data.code = errno;
+
             if(remove(SHM_PATH)) perror("shm_init: remove");
             if(remove(SEM_PATH)) perror("shm_init: remove");
-            data.code = errno;
+            if(remove(MSG_PATH)) perror("shm_init: remove");
             return EXIT_FAILURE;
         }
     } else {
@@ -127,6 +152,7 @@ static byte shm_init() {
             shmctl(data.shmid, IPC_RMID, NULL);
             if(remove(SHM_PATH)) perror("shm_init: remove");
             if(remove(SEM_PATH)) perror("shm_init: remove");
+            if(remove(MSG_PATH)) perror("shm_init: remove");
         }
         data.code = errno;
         return EXIT_FAILURE;
@@ -163,11 +189,20 @@ byte init() {
             remove(SHM_PATH);
             return EXIT_FAILURE;
         }
+        if(file_init(MSG_PATH) != EXIT_SUCCESS) {
+
+            perror("init: file_init");
+            remove(SHM_PATH);
+            remove(SEM_PATH);
+            return EXIT_FAILURE;
+        }
     } else {
         bool ok = NO;
         for(ubyte x = 0; x < 8; x++) {
 
-            if(!access(SEM_PATH, F_OK) && !access(SHM_PATH, F_OK)) {
+            if(!access(SEM_PATH, F_OK)
+                    && !access(SHM_PATH, F_OK)
+                    && !access(MSG_PATH, F_OK)) {
                 ok = YES;
                 break;
             }
@@ -177,6 +212,7 @@ byte init() {
     }
     if(shm_init() != EXIT_SUCCESS) return EXIT_FAILURE;
     if(sem_init() != EXIT_SUCCESS) return EXIT_FAILURE;
+    if(msg_init() != EXIT_SUCCESS) return EXIT_FAILURE;
     if(!data.first) {
 
         while(YES) {

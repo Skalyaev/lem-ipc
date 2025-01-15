@@ -11,7 +11,8 @@ byte player_check() {
     const ubyte y = data.self->y > 0 ? data.self->y - 1 : 0;
 
     t_player* player[MAX_PLAYERS] = {0};
-    ushort count = 0;
+    ushort idx = 0;
+    bool down = NO;
     bool found = NO;
 
     if(semtimedop(data.semid, &data.sem->board_lock,
@@ -35,16 +36,23 @@ byte player_check() {
             if(cell->color == data.self->color) continue;
 
             found = NO;
-            for(ubyte z = 0; z < count; z++) {
+            for(ubyte z = 0; z < idx; z++) {
 
                 if(cell->id != player[z]->id) continue;
                 found = YES;
                 break;
             }
             if(found) continue;
-            player[count++] = cell;
-            if(count == 2) break;
+            for(ubyte z = 0; z < idx; z++) {
+
+                if(cell->color != player[z]->color) continue;
+                down = YES;
+                break;
+            }
+            if(down) break;
+            player[idx++] = cell;
         }
+        if(down) break;
     }
     if(semtimedop(data.semid, &data.sem->board_unlock,
                   1, &data.sem->timeout)) {
@@ -53,12 +61,7 @@ byte player_check() {
         data.code = errno;
         return EXIT_FAILURE;
     }
-    return count < 2 ? EXIT_SUCCESS : EXIT_GAMEOVER;
-}
-
-byte player_listen() {
-
-    return EXIT_SUCCESS;
+    return down ? EXIT_GAMEOVER : EXIT_SUCCESS;
 }
 
 byte player_think() {
@@ -119,6 +122,8 @@ byte player_think() {
     ushort nearest_enemy[2] = {0, 0};
 
     t_player* player;
+    const size_t player_size = sizeof(t_player);
+
     for(ushort x = 0; x < board_width; x++) {
         for(ushort y = 0; y < board_height; y++) {
 
@@ -132,16 +137,41 @@ byte player_think() {
             if(distance >= min_distance) continue;
             min_distance = distance;
 
+            memcpy(&data.nearest, player, player_size);
             nearest_enemy[0] = x;
             nearest_enemy[1] = y;
             if(distance < FLED_DISTANCE) fled = YES;
         }
     }
-    if(!fled) return EXIT_SUCCESS;
+    if(data.target.id) {
 
-    float max_distance = 0.0;
+        distance = sqrt(pow(data.self->x - data.target.x, 2)
+                        + pow(data.self->y - data.target.y, 2));
+        if(distance <= min_distance + 2) fled = NO;
+    }
     ushort new_x, new_y;
+    if(!fled) {
+        float best_distance = FLT_MAX;
+        for(ubyte i = 0; i < 5; i++) {
 
+            new_x = data.self->x + directions[i][0];
+            new_y = data.self->y + directions[i][1];
+
+            if(new_x >= board_width || new_y >= board_height) continue;
+            if(directions[i][0] && directions[i][1] && board[new_x][new_y].id) continue;
+
+            distance = sqrt(pow(data.target.x - new_x, 2)
+                            + pow(data.target.y - new_y, 2));
+
+            if(distance >= best_distance) continue;
+            best_distance = distance;
+
+            data.direction[0] = directions[i][0];
+            data.direction[1] = directions[i][1];
+        }
+        return EXIT_SUCCESS;
+    }
+    float max_distance = 0.0;
     for(ubyte idx = 0; idx < 5; idx++) {
 
         new_x = data.self->x + directions[idx][0];
@@ -165,6 +195,119 @@ byte player_think() {
 
 byte player_communicate() {
 
+    t_team teams[MAX_TEAMS] = {0};
+    const size_t team_size = sizeof(teams);
+
+    if(semtimedop(data.semid, &data.sem->teams_lock,
+                  1, &data.sem->timeout)) {
+
+        perror("player_communicate: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    printf("player_communicate: locked teams semaphore\n");
+    memcpy(teams, data.shm->teams, team_size);
+
+    if(semtimedop(data.semid, &data.sem->teams_unlock,
+                  1, &data.sem->timeout)) {
+
+        perror("player_communicate: semtimedop");
+        data.code = errno;
+        return EXIT_FAILURE;
+    }
+    printf("player_communicate: unlocked teams semaphore\n");
+    data.target.id = 0;
+    t_msg msg = {0};
+    sprintf(msg.text, "%d %d", data.nearest.x, data.nearest.y);
+
+    t_team* team = NULL;
+    ubyte team_idx = -1;
+    ubyte self_idx = -1;
+    for(ubyte x = 0; x < data.shm->max_teams; x++) {
+
+        team = &teams[x];
+        if(!team->name[0]) continue;
+        if(strcmp(team->name, data.opt.team)) continue;
+        if(team->players_count < 2) return EXIT_SUCCESS;
+
+        for(ubyte y = 0; y < team->players_count; y++) {
+
+            if(team->ids[y] == data.self->id) self_idx = y;
+            msg.type = x + 1 + y;
+            if(msgsnd(data.msgid, &msg, MSG_SIZE, IPC_NOWAIT) != -1) continue;
+            if(errno == EAGAIN) {
+
+                for(ubyte z = team->players_count; z < MAX_PLAYERS; z++)
+                    msgrcv(data.msgid, &msg, MSG_SIZE, x + 1 + z, IPC_NOWAIT);
+                continue;
+            }
+            perror("player_communicate: msgsnd");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        team_idx = x;
+        break;
+    }
+    printf("player_communicate: all messages sent\n");
+    char positions[MAX_PLAYERS][MSG_SIZE] = {0};
+    ubyte count = 0;
+    for(ubyte y = 0; y < team->players_count; y++) {
+
+        if(msgrcv(data.msgid, &msg, MSG_SIZE,
+                  team_idx + 1 + self_idx, IPC_NOWAIT) == -1) {
+
+            if(errno == ENOMSG) continue;
+            perror("player_communicate: msgrcv");
+            data.code = errno;
+            return EXIT_FAILURE;
+        }
+        strcpy(positions[y], msg.text);
+        count++;
+    }
+    printf("player_communicate: all messages received\n");
+    if(!count) return EXIT_SUCCESS;
+
+    int px[MAX_PLAYERS] = {0};
+    int py[MAX_PLAYERS] = {0};
+    int cnt[MAX_PLAYERS] = {0};
+
+    int pair_count = 0;
+    int max_count = 0;
+    int best_index = 0;
+
+    int xx, yy;
+    bool found;
+    for(ubyte i = 0; i < team->players_count; i++) {
+
+        sscanf(positions[i], "%d %d", &xx, &yy);
+        found = NO;
+        for(int j = 0; j < pair_count; j++) {
+
+            if(px[j] != xx || py[j] != yy) continue;
+            cnt[j]++;
+            if(cnt[j] > max_count) {
+
+                max_count = cnt[j];
+                best_index = j;
+            }
+            found = YES;
+            break;
+        }
+        if(found) continue;
+
+        px[pair_count] = xx;
+        py[pair_count] = yy;
+        cnt[pair_count] = 1;
+        if(cnt[pair_count] > max_count) {
+
+            max_count = cnt[pair_count];
+            best_index = pair_count;
+        }
+        pair_count++;
+    }
+    data.target.id = 1;
+    data.target.x = px[best_index];
+    data.target.y = py[best_index];
     return EXIT_SUCCESS;
 }
 
@@ -228,13 +371,12 @@ byte player_log() {
     for(ubyte x = 0; x < data.shm->max_teams; x++) {
 
         if(!data.shm->teams[x].name[0]) continue;
-        if(!strcmp(data.shm->teams[x].name, data.opt.team)) {
-
-            team = &data.shm->teams[x];
-            break;
-        }
+        if(strcmp(data.shm->teams[x].name, data.opt.team)) continue;
+        team = &data.shm->teams[x];
+        break;
     }
-    printf("\nTeam: %s%s%s\n", team_color(), team->name, RESET);
+    printf("\nPlayer: %d\n", data.self->id);
+    printf("Team: %s%s%s\n", team_color(), team->name, RESET);
     printf("Team mates: %d\n", team->players_count);
     printf("Teams count: %d\n", data.shm->teams_count);
 
@@ -262,5 +404,7 @@ byte player_log() {
         return EXIT_FAILURE;
     }
     printf("Position: %d, %d\n", data.self->x, data.self->y);
+    if(data.target.id) printf("Target: %d, %d\n", data.target.x, data.target.y);
+    else printf("Target: none\n");
     return EXIT_SUCCESS;
 }

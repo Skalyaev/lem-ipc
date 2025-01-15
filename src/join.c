@@ -20,6 +20,7 @@ static bool try_cell(ushort* const x, ushort* const y, t_team* const team) {
     data.self->color = team->color;
     data.self->id = data.shm->players_count + 1;
 
+    team->ids[team->players_count] = data.self->id;
     team->players_count++;
     data.shm->players_count++;
     data.joined = YES;
