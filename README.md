@@ -32,23 +32,15 @@
 ## Install
 
 ```bash
-mkdir -p ~/.local/src
-mkdir -p ~/.local/bin
-
 apt update -y
-apt install -y git
 apt install -y make
 apt install -y gcc
 ```
 
 ```bash
-cd ~/.local/src
 git clone https://github.com/Skalyaev/lem-ipc.git
 cd lem-ipc && unzip mlx.zip
-make install && make
 
-ln -s $PWD/lem-ipc ~/.local/bin/lem-ipc
-export PATH=~/.local/bin:$PATH
-
-lem-ipc -g
+make mlx && make
+./lem-ipc -g
 ```

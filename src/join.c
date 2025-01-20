@@ -4,95 +4,77 @@ extern t_lemipc data;
 
 static byte failure(const char* const msg) {
 
-    perror(msg);
-    data.code = errno;
     if(data.first) data.abort = YES;
+    data.code = errno;
+    perror(msg);
     return EXIT_FAILURE;
 }
 
-static bool try_cell(ushort* const x, ushort* const y, t_team* const team) {
+static byte try_cell(const pid_t* const pid,
+                     const ushort* const x,
+                     const ushort* const y,
+                     t_team* const team) {
 
-    if(data.shm->board[*x][*y].id) return NO;
+    t_player* const player = &data.shm->board[*x][*y];
+    if(player->id) return EXIT_FAILURE;
 
-    data.self = &data.shm->board[*x][*y];
-    data.self->x = *x;
-    data.self->y = *y;
-    data.self->color = team->color;
-    data.self->id = data.shm->players_count + 1;
+    player->id = *pid;
+    player->color = team->color;
 
-    team->ids[team->players_count] = data.self->id;
+    team->ids[team->players_count] = *pid;
     team->players_count++;
     data.shm->players_count++;
+
+    memcpy(&data.self, player, PLAYER_SIZE);
     data.joined = YES;
-    return YES;
+    return EXIT_SUCCESS;
 }
 
 static void join_board(t_team* const team) {
 
-    const ushort board_width = data.shm->width / PLAYER_VOLUME;
-    const ushort board_height = data.shm->height / PLAYER_VOLUME;
+    const pid_t pid = getpid();
 
-    srand(time(NULL) + getpid());
-    ushort x = rand() % board_width;
-    ushort y = rand() % board_height;
+    srand(time(NULL) + pid);
+    const ushort baseX = rand() % BOARD_WIDTH;
+    const ushort baseY = rand() % BOARD_HEIGHT;
 
-    if(x > board_width) x = 0;
-    if(y > board_width) y = 0;
-
-    if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) return;
+    ushort x = baseX + 1;
+    ushort y = baseY + 1;
     while(YES) {
 
-        if(try_cell(&x, &y, team)) break;
+        if(x >= BOARD_WIDTH) {
+            x = 0;
+            y++;
+        }
+        if(y >= BOARD_HEIGHT) y = 0;
+
+        if(try_cell(&pid, &x, &y, team) == EXIT_SUCCESS) return;
         x++;
-        if(x <= board_width) continue;
-        x = 0;
-        y++;
-        if(y > board_height) y = 0;
+        if(x == baseX && y == baseY) break;
     }
-    if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) return;
+    if(team->players_count) return;
+    data.shm->teams_count--;
+    memset(team->name, 0, NAME_SIZE);
 }
 
 static t_team* join_team() {
 
-    if(data.shm->players_count == data.shm->max_players) return NULL;
+    if(data.shm->players_count == MAX_PLAYERS) return NULL;
     t_team* team = NULL;
-    for(ushort x = 0; x < data.shm->max_teams; x++) {
+    for(ubyte x = 0; x < MAX_TEAMS; x++) {
 
         if(strcmp(data.opt.team, data.shm->teams[x].name)) continue;
         team = &data.shm->teams[x];
         break;
     }
     if(team) return team;
-    for(ushort x = 0; x < data.shm->max_teams; x++) {
+    for(ubyte x = 0; x < MAX_TEAMS; x++) {
 
-        if(data.shm->teams[x].name[0]) continue;
-        strcpy(data.shm->teams[x].name, data.opt.team);
-
-        team = &data.shm->teams[x];
+        if(data.shm->teams[x].players_count) continue;
         data.shm->teams_count++;
 
-        char path[64] = {0};
-        sprintf(path, MSG_PATH, x);
-        if(file_init(path) != EXIT_SUCCESS) {
-
-            perror("join_team: file_init");
-            remove(path);
-            return NULL;
-        }
-        key_t key = ftok(path, IPC_ID);
-        if(key == -1) {
-
-            perror("join_team: ftok");
-            remove(path);
-            return NULL;
-        }
-        team->msgid = msgget(key, IPC_CREAT | 0666);
-        if(team->msgid == -1) {
-
-            perror("join_team: msgget");
-            remove(path);
-            return NULL;
-        }
+        team = &data.shm->teams[x];
+        strcpy(team->name, data.opt.team);
         break;
     }
     return team;
@@ -100,54 +82,42 @@ static t_team* join_team() {
 
 byte join() {
 
-    if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout))
+    if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout))
         return failure("join: semtimedop");
 
-    if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
 
-        semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout);
-        return failure("join: semtimedop");
-    }
-    if(semtimedop(data.semid, &data.sem->players_count_lock, 1, &data.sem->timeout)) {
-
-        semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout);
         semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout);
-        return failure("join: semtimedop");
-    }
-    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout)) {
-
-        semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout);
-        semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout);
-        semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout);
         return failure("join: semtimedop");
     }
     t_team* const team = join_team();
     if(team) join_board(team);
-    if(data.joined) {
 
-        bool canstart = NO;
-        for(ubyte x = 0; x < data.shm->max_teams; x++) {
-
-            if(!data.shm->teams[x].name[0]) continue;
-            if(data.shm->teams[x].players_count < 2) continue;
-            canstart = YES;
-            break;
-        }
-        if(canstart && (data.shm->over || !data.shm->started)
-                && data.shm->players_count > 2
-                && data.shm->teams_count > 1) {
-
-            data.shm->started = YES;
-            data.shm->over = NO;
-            gettimeofday(&data.shm->start, NULL);
-        }
-    } else if(data.first) data.abort = YES;
-
-    if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout)
-            || semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)
-            || semtimedop(data.semid, &data.sem->players_count_unlock, 1, &data.sem->timeout)
-            || semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout))
+    if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)
+            || semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout))
         return failure("join: semtimedop");
 
-    return data.joined ? EXIT_SUCCESS : EXIT_FAILURE;
+    if(!data.joined) return EXIT_FAILURE;
+
+    if(semtimedop(data.semid, &data.sem->party_lock, 1, &data.sem->timeout))
+        return failure("join: semtimedop");
+
+    if((!data.shm->started || data.shm->over)
+            && data.shm->players_count > 2 && data.shm->teams_count > 1) {
+
+        t_team* team;
+        for(ubyte x = 0; x < MAX_TEAMS; x++) {
+
+            team = &data.shm->teams[x];
+            if(team->players_count < 2) continue;
+
+            gettimeofday(&data.shm->start, NULL);
+            data.shm->over = NO;
+            data.shm->started = YES;
+            break;
+        }
+    }
+    if(semtimedop(data.semid, &data.sem->party_unlock, 1, &data.sem->timeout))
+        return failure("join: semtimedop");
+    return EXIT_SUCCESS;
 }

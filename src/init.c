@@ -4,10 +4,36 @@ extern t_lemipc data;
 
 static byte failure(const char* const msg) {
 
-    perror(msg);
-    data.code = errno;
     if(data.first) data.abort = YES;
+    data.code = errno;
+    perror(msg);
     return EXIT_FAILURE;
+}
+
+static byte file_init(const char* const path) {
+
+    FILE* file = fopen(path, "r");
+    if(!file) {
+
+        file = fopen(path, "w");
+        if(!file) return EXIT_FAILURE;
+        data.first = YES;
+    }
+    fclose(file);
+    return EXIT_SUCCESS;
+}
+
+static byte msg_init(int* const msgid, const ubyte idx) {
+
+    char path[32] = {0};
+    sprintf(path, MSG_PATH, idx);
+    if(file_init(path) != EXIT_SUCCESS) return EXIT_FAILURE;
+
+    key_t key = ftok(path, IPC_ID);
+    if(key == -1) return EXIT_FAILURE;
+
+    *msgid = msgget(key, IPC_CREAT | 0666);
+    return (*msgid == -1) ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 static void new_sem(t_sembuf* const lock,
@@ -25,29 +51,27 @@ static void new_sem(t_sembuf* const lock,
 
 static byte sem_init() {
 
-    const size_t sem_size = sizeof(t_sem);
+    data.sem = malloc(SEM_SIZE);
+    if(!data.sem) return EXIT_FAILURE;
 
-    data.sem = malloc(sem_size);
-    if(!data.sem) return failure("sem_init: malloc");
-
-    memset(data.sem, 0, sem_size);
+    memset(data.sem, 0, SEM_SIZE);
     data.sem->timeout.tv_sec = 8;
 
     key_t key = ftok(SEM_PATH, IPC_ID);
-    if(key == -1) return failure("sem_init: ftok");
+    if(key == -1) return EXIT_FAILURE;
     if(data.first) {
 
-        data.semid = semget(key, SEM_COUNT, IPC_CREAT | IPC_EXCL | 0666);
-        if(data.semid == -1) return failure("sem_init: semget");
-
-        ushort values[SEM_COUNT];
-        memset(values, 1, sizeof(values));
+        data.semid = semget(key, SEM_COUNT, IPC_CREAT | 0666);
+        if(data.semid == -1) return EXIT_FAILURE;
 
         t_semun semun = {0};
+        ushort values[SEM_COUNT];
+
+        memset(values, 1, sizeof(values));
         semun.array = values;
 
         if(semctl(data.semid, 0, SETALL, semun) == -1)
-            return failure("sem_init: semctl");
+            return EXIT_FAILURE;
     } else {
         for(ubyte x = 0; x < 8; x++) {
 
@@ -55,12 +79,8 @@ static byte sem_init() {
             if(data.semid == -1) sleep(1);
             else break;
         }
-        if(data.semid == -1) return failure("sem_init: semget");
+        if(data.semid == -1) return EXIT_FAILURE;
     }
-    new_sem(&data.sem->init_lock,
-            &data.sem->init_unlock,
-            SEM_INIT);
-
     new_sem(&data.sem->board_lock,
             &data.sem->board_unlock,
             SEM_BOARD);
@@ -69,91 +89,36 @@ static byte sem_init() {
             &data.sem->teams_unlock,
             SEM_TEAMS);
 
-    new_sem(&data.sem->players_count_lock,
-            &data.sem->players_count_unlock,
-            SEM_PLAYERS_COUNT);
+    new_sem(&data.sem->party_lock,
+            &data.sem->party_unlock,
+            SEM_PARTY);
 
     new_sem(&data.sem->gui_lock,
             &data.sem->gui_unlock,
             SEM_GUI);
-
-    new_sem(&data.sem->party_lock,
-            &data.sem->party_unlock,
-            SEM_PARTY);
 
     return EXIT_SUCCESS;
 }
 
 static byte shm_init() {
 
-    const size_t shm_size = sizeof(t_shm);
-
     key_t key = ftok(SHM_PATH, IPC_ID);
-    if(key == -1) {
-
-        perror("shm_init: ftok");
-        if(data.first) {
-
-            if(remove(SHM_PATH)) perror("shm_init: remove");
-            if(remove(SEM_PATH)) perror("shm_init: remove");
-            if(remove(MSG_PATH)) perror("shm_init: remove");
-        }
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
+    if(key == -1)  return EXIT_FAILURE;
     if(data.first) {
 
-        data.shmid = shmget(key, shm_size, IPC_CREAT | IPC_EXCL | 0666);
-        if(data.shmid == -1) {
-
-            perror("shm_init: shmget");
-            data.code = errno;
-
-            if(remove(SHM_PATH)) perror("shm_init: remove");
-            if(remove(SEM_PATH)) perror("shm_init: remove");
-            if(remove(MSG_PATH)) perror("shm_init: remove");
-            return EXIT_FAILURE;
-        }
+        data.shmid = shmget(key, SHM_SIZE, IPC_CREAT | 0666);
+        if(data.shmid == -1) return EXIT_FAILURE;
     } else {
         for(ubyte x = 0; x < 8; x++) {
 
-            data.shmid = shmget(key, shm_size, 0666);
+            data.shmid = shmget(key, SHM_SIZE, 0666);
             if(data.shmid == -1) sleep(1);
             else break;
         }
+        if(data.shmid == -1) return EXIT_FAILURE;
     }
     data.shm = shmat(data.shmid, NULL, 0);
-    if(data.shm == (void*)-1) {
-
-        perror("shm_init: shmat");
-        if(data.first) {
-
-            shmctl(data.shmid, IPC_RMID, NULL);
-            if(remove(SHM_PATH)) perror("shm_init: remove");
-            if(remove(SEM_PATH)) perror("shm_init: remove");
-            if(remove(MSG_PATH)) perror("shm_init: remove");
-        }
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
-    return EXIT_SUCCESS;
-}
-
-byte file_init(const char* const path) {
-
-    FILE* file = fopen(path, "r");
-    if(!file) {
-        file = fopen(path, "w");
-        if(!file) {
-
-            perror("file_init: fopen");
-            data.code = errno;
-            return EXIT_FAILURE;
-        }
-        data.first = YES;
-    }
-    fclose(file);
-    return EXIT_SUCCESS;
+    return (data.shm == (void*)-1) ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 byte init() {
@@ -161,80 +126,80 @@ byte init() {
     if(file_init(SHM_PATH) != EXIT_SUCCESS) return EXIT_FAILURE;
     if(data.first) {
 
-        if(file_init(SEM_PATH) != EXIT_SUCCESS) {
-
-            perror("init: file_init");
-            remove(SHM_PATH);
-            return EXIT_FAILURE;
-        }
-        if(file_init(MSG_PATH) != EXIT_SUCCESS) {
-
-            perror("init: file_init");
-            remove(SHM_PATH);
-            remove(SEM_PATH);
-            return EXIT_FAILURE;
-        }
+        if(file_init(SEM_PATH) != EXIT_SUCCESS)
+            return failure("init: file_init");
     } else {
         bool ok = NO;
         for(ubyte x = 0; x < 8; x++) {
 
-            if(!access(SEM_PATH, F_OK)
-                    && !access(SHM_PATH, F_OK)
-                    && !access(MSG_PATH, F_OK)) {
-                ok = YES;
-                break;
+            if(access(SEM_PATH, F_OK) || access(SHM_PATH, F_OK)) {
+                sleep(1);
+                continue;
             }
-            else sleep(1);
+            ok = YES;
+            break;
         }
-        if(!ok) return EXIT_FAILURE;
+        data.code = ok ? EXIT_SUCCESS : EXIT_FAILURE;
+        if(!ok) return data.code;
     }
-    if(shm_init() != EXIT_SUCCESS) return EXIT_FAILURE;
-    if(sem_init() != EXIT_SUCCESS) return EXIT_FAILURE;
-    if(!data.first) {
+    if(shm_init() != EXIT_SUCCESS) return failure("init: shm_init");
+    if(sem_init() != EXIT_SUCCESS) return failure("init: sem_init");
+    if(data.first) {
 
-        while(YES) {
-            if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout))
-                return failure("init: semtimedop");
+        t_team* team;
+        bool ok = YES;
+        const int colors[MAX_TEAMS] = {
 
-            if(data.shm->initialized) {
-                if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
-                    return failure("init: semtimedop");
-                break;
-            }
-            if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
-                return failure("init: semtimedop");
-            sleep(1);
+            RGB_RED_, RGB_GREEN_, RGB_BLUE_,
+            RGB_CYAN_, RGB_YELLOW_, RGB_MAGENTA_
         };
-        return EXIT_SUCCESS;
+        if(semtimedop(data.semid, &data.sem->party_lock,
+                      1, &data.sem->timeout))
+            return failure("init: semtimedop");
+
+        memset(data.shm, 0, SHM_SIZE);
+        for(ubyte x = 0; x < MAX_TEAMS && ok; x++) {
+
+            team = &data.shm->teams[x];
+            team->color = colors[x];
+            if(msg_init(&team->msgid, x) == EXIT_SUCCESS) continue;
+            ok = NO;
+            break;
+        }
+        if(ok) {
+            t_player* player;
+            for(ushort x = 0; x < BOARD_WIDTH; x++) {
+                for(ushort y = 0; y < BOARD_HEIGHT; y++) {
+
+                    player = &data.shm->board[x][y];
+                    player->x = x;
+                    player->y = y;
+                }
+            }
+            data.shm->initialized = YES;
+        }
+        if(semtimedop(data.semid, &data.sem->party_unlock,
+                      1, &data.sem->timeout))
+            return failure("init: semtimedop");
+
+        return ok ? EXIT_SUCCESS : EXIT_FAILURE;
     }
-    const int colors[] = {RGB_RED_, RGB_GREEN_, RGB_BLUE_, RGB_CYAN_, RGB_YELLOW_, RGB_MAGENTA_};
+    bool ok = NO;
+    for(ubyte x = 0; x < 8; x++) {
 
-    if(semtimedop(data.semid, &data.sem->init_lock, 1, &data.sem->timeout))
-        return failure("init: semtimedop");
+        if(semtimedop(data.semid, &data.sem->party_lock,
+                      1, &data.sem->timeout))
+            return failure("init: semtimedop");
 
-    data.shm->width = data.opt.width;
-    data.shm->height = data.opt.height;
-    data.shm->max_teams = data.opt.max_teams;
-    data.shm->max_players = data.opt.max_players;
+        if(data.shm->initialized) ok = YES;
 
-    for(ubyte x = 0; x < MAX_TEAMS; x++) {
+        if(semtimedop(data.semid, &data.sem->party_unlock,
+                      1, &data.sem->timeout))
+            return failure("init: semtimedop");
 
-        memset(data.shm->teams[x].name, 0, NAME_SIZE);
-        data.shm->teams[x].color = colors[x];
-    }
-    const size_t player_size = sizeof(t_player);
-
-    for(ushort x = 0; x < MAX_WIDTH; x++)
-        for(ushort y = 0; y < MAX_HEIGHT; y++)
-            memset(&data.shm->board[x][y], 0, player_size);
-
-    data.shm->teams_count = 0;
-    data.shm->players_count = 0;
-    data.shm->initialized = YES;
-    data.shm->gui = NO;
-
-    if(semtimedop(data.semid, &data.sem->init_unlock, 1, &data.sem->timeout))
-        return failure("init: semtimedop");
-
-    return EXIT_SUCCESS;
+        if(ok) break;
+        else sleep(1);
+    };
+    data.code = ok ? EXIT_SUCCESS : EXIT_FAILURE;
+    return data.code;
 }

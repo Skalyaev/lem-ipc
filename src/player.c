@@ -4,352 +4,268 @@ extern t_lemipc data;
 
 byte player_check() {
 
-    const ubyte board_width = data.shm->width / PLAYER_VOLUME;
-    const ubyte board_height = data.shm->height / PLAYER_VOLUME;
+    const ushort posX = data.self.x;
+    const ushort posY = data.self.y;
 
-    ubyte x, y, xVol, yVol;
-    if(data.self->x > 0){
-        x = data.self->x - 1;
-        xVol = 3;
-    }else{
-        x = 0;
-        xVol = 2;
-    }
-    if(data.self->y > 0){
-        y = data.self->y - 1;
-        yVol = 3;
-    }else{
-        y = 0;
-        yVol = 2;
-    }
-    t_player* player[MAX_PLAYERS] = {0};
-    ushort idx = 0;
-    bool down = NO;
-    bool found = NO;
+    t_player* players[MAX_PLAYERS] = {0};
+    t_player* player;
 
-    if(semtimedop(data.semid, &data.sem->board_lock,
-                  1, &data.sem->timeout)) {
+    ubyte idx = 0;
+    bool gameover = NO;
+    if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
 
-        perror("player_check: semtimedop");
         data.code = errno;
+        perror("player_check: semtimedop");
         return EXIT_FAILURE;
     }
-    t_player* cell;
-    for(ubyte xx = 0; xx < xVol; xx++) {
-        for(ubyte yy = 0; yy < yVol; yy++) {
+    for(ushort x = posX - 1; x < posX + 2; x++) {
+        for(ushort y = posY - 1; y < posY + 2; y++) {
 
-            if(x + xx >= board_width) continue;
-            if(y + yy >= board_height) continue;
+            if(x >= BOARD_WIDTH || y >= BOARD_HEIGHT) continue;
+            if(x == posX && y == posY) continue;
 
-            cell = &data.shm->board[x + xx][y + yy];
-            if(!cell->id) continue;
+            player = &data.shm->board[x][y];
+            if(!player->id) continue;
+            if(player->color == data.self.color) continue;
 
-            if(cell->id == data.self->id) continue;
-            if(cell->color == data.self->color) continue;
-
-            found = NO;
             for(ubyte z = 0; z < idx; z++) {
 
-                if(cell->id != player[z]->id) continue;
-                found = YES;
+                if(players[z]->color != player->color) continue;
+                gameover = YES;
                 break;
             }
-            if(found) continue;
-            for(ubyte z = 0; z < idx; z++) {
-
-                if(cell->color != player[z]->color) continue;
-                down = YES;
-                break;
-            }
-            if(down) break;
-            player[idx++] = cell;
+            if(gameover) break;
+            players[idx++] = player;
         }
-        if(down) break;
+        if(gameover) break;
     }
-    if(semtimedop(data.semid, &data.sem->board_unlock,
-                  1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) {
 
-        perror("player_check: semtimedop");
         data.code = errno;
+        perror("player_check: semtimedop");
         return EXIT_FAILURE;
     }
-    return down ? EXIT_GAMEOVER : EXIT_SUCCESS;
+    return gameover ? EXIT_GAMEOVER : EXIT_SUCCESS;
+}
+
+static int direction_cmp_target(const void* a, const void* b) {
+
+    const byte* d1 = a;
+    const byte* d2 = b;
+    double dist1 = sqrt(pow(data.self.x + d1[0] - data.target.x, 2)
+                        + pow(data.self.y + d1[1] - data.target.y, 2));
+    double dist2 = sqrt(pow(data.self.x + d2[0] - data.target.x, 2)
+                        + pow(data.self.y + d2[1] - data.target.y, 2));
+    return (dist1 > dist2) - (dist1 < dist2);
+}
+
+static int direction_cmp_nearest(const void* a, const void* b) {
+
+    const byte* d1 = a;
+    const byte* d2 = b;
+    double dist1 = sqrt(pow(data.self.x + d1[0] - data.nearest.x, 2)
+                        + pow(data.self.y + d1[1] - data.nearest.y, 2));
+    double dist2 = sqrt(pow(data.self.x + d2[0] - data.nearest.x, 2)
+                        + pow(data.self.y + d2[1] - data.nearest.y, 2));
+    return (dist1 < dist2) - (dist1 > dist2);
 }
 
 byte player_think() {
 
-    t_team* team = NULL;
-    if(semtimedop(data.semid, &data.sem->teams_lock,
-                  1, &data.sem->timeout)) {
+    static const byte directions[4][2] = {
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+    };
+    static t_player board[BOARD_WIDTH][BOARD_HEIGHT];
 
-        perror("player_think: semtimedop");
+    static const size_t board_size = sizeof(board);
+    static const size_t directions_size = sizeof(directions);
+    static const size_t diration_size = sizeof(byte) * 2;
+
+    if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
+
         data.code = errno;
-        return EXIT_FAILURE;
-    }
-    for(ubyte x = 0; x < data.shm->max_teams; x++) {
-
-        if(!data.shm->teams[x].name[0]) continue;
-        if(strcmp(data.shm->teams[x].name, data.opt.team)) continue;
-        team = &data.shm->teams[x];
-        break;
-    }
-    if(semtimedop(data.semid, &data.sem->teams_unlock,
-                  1, &data.sem->timeout)) {
-
         perror("player_think: semtimedop");
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
-    const ubyte board_width = data.shm->width / PLAYER_VOLUME;
-    const ubyte board_height = data.shm->height / PLAYER_VOLUME;
-
-    t_player board[MAX_WIDTH][MAX_HEIGHT];
-    const size_t board_size = sizeof(board);
-
-    if(semtimedop(data.semid, &data.sem->board_lock,
-                  1, &data.sem->timeout)) {
-
-        perror("player_think: semtimedop");
-        data.code = errno;
         return EXIT_FAILURE;
     }
     memcpy(board, data.shm->board, board_size);
+    if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) {
 
-    if(semtimedop(data.semid, &data.sem->board_unlock,
-                  1, &data.sem->timeout)) {
-
-        perror("player_think: semtimedop");
         data.code = errno;
+        perror("player_think: semtimedop");
         return EXIT_FAILURE;
     }
-    static const byte directions[5][2] = {
-        {0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}
-    };
-    data.direction[0] = 0;
-    data.direction[1] = 0;
+    const ushort posX = data.self.x;
+    const ushort posY = data.self.y;
+    memset(&data.nearest, 0, PLAYER_SIZE);
 
-    float min_distance = FLT_MAX;
-    float distance;
-    bool fled = NO;
-    ushort nearest_enemy[2] = {0, 0};
-
+    ushort minDistance = USHRT_MAX;
+    ushort x, y, distance;
     t_player* player;
-    const size_t player_size = sizeof(t_player);
 
-    for(ushort x = 0; x < board_width; x++) {
-        for(ushort y = 0; y < board_height; y++) {
+    for(x = 0; x < BOARD_WIDTH; x++) {
+        for(y = 0; y < BOARD_HEIGHT; y++) {
 
             player = &board[x][y];
-            if(!player->id || player->id == data.self->id) continue;
-            if(player->color == team->color) continue;
+            if(!player->id) continue;
+            if(player->color == data.self.color) continue;
 
-            distance = sqrt(pow(data.self->x - x, 2)
-                            + pow(data.self->y - y, 2));
+            distance = (x - posX) * (x - posX) + (y - posY) * (y - posY);
+            if(distance >= minDistance) continue;
 
-            if(distance >= min_distance) continue;
-            min_distance = distance;
-
-            memcpy(&data.nearest, player, player_size);
-            nearest_enemy[0] = x;
-            nearest_enemy[1] = y;
-            if(distance < FLED_DISTANCE) fled = YES;
+            minDistance = distance;
+            memcpy(&data.nearest, player, PLAYER_SIZE);
         }
     }
-    ushort new_x, new_y;
+    memcpy(data.self.directions, directions, directions_size);
+
     if(data.target.id) {
-
-        distance = sqrt(pow(data.self->x - data.target.x, 2)
-                        + pow(data.self->y - data.target.y, 2));
-        if(distance <= min_distance + 2) fled = NO;
-
-        float best_distance = FLT_MAX;
-        for(ubyte i = 0; i < 5; i++) {
-
-            new_x = data.self->x + directions[i][0];
-            new_y = data.self->y + directions[i][1];
-
-            if(new_x >= board_width || new_y >= board_height) continue;
-            if(directions[i][0] && directions[i][1] && board[new_x][new_y].id)
-                continue;
-
-            distance = sqrt(pow(data.target.x - new_x, 2)
-                            + pow(data.target.y - new_y, 2));
-
-            if(distance >= best_distance) continue;
-            best_distance = distance;
-
-            data.direction[0] = directions[i][0];
-            data.direction[1] = directions[i][1];
-        }
-        return EXIT_SUCCESS;
-    }
-    if(!fled) return EXIT_SUCCESS;
-
-    float max_distance = 0.0;
-    for(ubyte idx = 0; idx < 5; idx++) {
-
-        new_x = data.self->x + directions[idx][0];
-        new_y = data.self->y + directions[idx][1];
-
-        if(new_x >= board_width || new_y >= board_height) continue;
-        if(directions[idx][0] && directions[idx][1] && board[new_x][new_y].id)
-            continue;
-
-        distance = sqrt(pow(new_x - nearest_enemy[0], 2)
-                        + pow(new_y - nearest_enemy[1], 2));
-
-        if(distance <= max_distance) continue;
-        max_distance = distance;
-
-        data.direction[0] = directions[idx][0];
-        data.direction[1] = directions[idx][1];
-    }
+        qsort(data.self.directions, 4, diration_size, direction_cmp_target);
+    } else if(minDistance < 100)
+        qsort(data.self.directions, 4, diration_size, direction_cmp_nearest);
+    else
+        data.self.directions[0][0] = data.self.directions[0][1] = 0;
     return EXIT_SUCCESS;
 }
 
 byte player_communicate() {
 
-    t_team teams[MAX_TEAMS] = {0};
-    static const size_t team_size = sizeof(teams);
+    t_team team = {0};
+    ubyte myidx = 0;
+    if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
 
-    if(semtimedop(data.semid, &data.sem->teams_lock,
-                  1, &data.sem->timeout)) {
-
-        perror("player_communicate: semtimedop");
         data.code = errno;
+        perror("player_communicate: semtimedop");
         return EXIT_FAILURE;
     }
-    memcpy(teams, data.shm->teams, team_size);
+    for(ubyte x = 0; x < MAX_TEAMS; x++) {
 
-    if(semtimedop(data.semid, &data.sem->teams_unlock,
-                  1, &data.sem->timeout)) {
+        if(!data.shm->teams[x].players_count) continue;
+        if(data.self.color != data.shm->teams[x].color) continue;
 
-        perror("player_communicate: semtimedop");
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
-    data.target.id = 0;
-    t_msg msg = {0};
-    sprintf(msg.text, "%d %d", data.nearest.x, data.nearest.y);
-
-    t_team* team = NULL;
-    ubyte self_idx = -1;
-    for(ubyte x = 0; x < data.shm->max_teams; x++) {
-
-        team = &teams[x];
-        if(!team->name[0]) continue;
-        if(data.self->color != team->color) continue;
-        if(team->players_count < 2) return EXIT_SUCCESS;
-
-        for(ubyte y = 0; y < team->players_count; y++) {
-
-            if(team->ids[y] == data.self->id) self_idx = y + 1;
-            msg.type = y + 1;
-
-            if(msgsnd(team->msgid, &msg, MSG_SIZE, IPC_NOWAIT) != -1) continue;
-            if(errno == EAGAIN) {
-
-                for(ubyte z = team->players_count; z < MAX_PLAYERS; z++)
-                    msgrcv(team->msgid, &msg, MSG_SIZE, z + 1, IPC_NOWAIT);
-                continue;
-            }
-            data.code = errno;
-            return EXIT_FAILURE;
-        }
+        memcpy(&team, &data.shm->teams[x], TEAM_SIZE);
         break;
     }
-    char positions[MAX_PLAYERS][MSG_SIZE] = {0};
-    ubyte count = 0;
-    for(ubyte y = 0; y < team->players_count; y++) {
+    if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)) {
 
-        if(msgrcv(team->msgid, &msg, MSG_SIZE,
-                  self_idx, IPC_NOWAIT) == -1) {
+        data.code = errno;
+        perror("player_communicate: semtimedop");
+        return EXIT_FAILURE;
+    }
+    for(ubyte x = 0; x < team.players_count && !myidx; x++)
+        if(team.ids[x] == data.self.id) myidx = x + 1;
+
+    data.target.id = 0;
+    if(!myidx) return EXIT_FAILURE;
+
+    t_msg recv = {0};
+    t_msg send = {0};
+    sprintf(send.text, "%d, %d %d", myidx, data.nearest.x, data.nearest.y);
+
+    for(ubyte x = 0; x < team.players_count; x++) {
+
+        send.type = team.ids[x];
+        if(msgsnd(team.msgid, &send, IPC_MSG_SIZE, IPC_NOWAIT) != -1) continue;
+        if(errno == EAGAIN) {
+
+            for(ubyte y = team.players_count; y < MAX_PLAYERS; y++)
+                msgrcv(team.msgid, &recv, IPC_MSG_SIZE, team.ids[y], IPC_NOWAIT);
+            continue;
+        }
+        data.code = errno;
+        perror("player_communicate: msgsnd");
+        return EXIT_FAILURE;
+    }
+    char msgs[team.players_count][IPC_MSG_SIZE];
+    memset(msgs, 0, sizeof(msgs));
+
+    ubyte count = 0;
+    for(ubyte x = 0; x < team.players_count; x++) {
+
+        if(msgrcv(team.msgid, &recv, IPC_MSG_SIZE, data.self.id, IPC_NOWAIT) == -1) {
 
             if(errno == ENOMSG) continue;
-            perror("player_communicate: msgrcv");
             data.code = errno;
+            perror("player_communicate: msgrcv");
             return EXIT_FAILURE;
         }
-        strcpy(positions[y], msg.text);
+        strcpy(msgs[x], recv.text);
         count++;
     }
-    if(!count) return EXIT_SUCCESS;
+    if(count < 2) return EXIT_SUCCESS;
 
-    int px[MAX_PLAYERS] = {0};
-    int py[MAX_PLAYERS] = {0};
-    int cnt[MAX_PLAYERS] = {0};
+    t_position positions[team.players_count];
+    memset(positions, 0, sizeof(positions));
 
-    int pair_count = 0;
-    int max_count = 0;
-    int best_index = 0;
+    ubyte idx;
+    ushort x, y;
+    for(count = 0; count < team.players_count; count++) {
 
-    int xx, yy;
-    bool found;
-    for(ubyte i = 0; i < team->players_count; i++) {
+        sscanf(msgs[count], "%hhu, %hu %hu", &idx, &x, &y);
+        if(idx > team.players_count) continue;
 
-        sscanf(positions[i], "%d %d", &xx, &yy);
-        found = NO;
-        for(int j = 0; j < pair_count; j++) {
-
-            if(px[j] != xx || py[j] != yy) continue;
-            cnt[j]++;
-            if(cnt[j] > max_count) {
-
-                max_count = cnt[j];
-                best_index = j;
-            }
-            found = YES;
-            break;
-        }
-        if(found) continue;
-
-        px[pair_count] = xx;
-        py[pair_count] = yy;
-        cnt[pair_count] = 1;
-        if(cnt[pair_count] > max_count) {
-
-            max_count = cnt[pair_count];
-            best_index = pair_count;
-        }
-        pair_count++;
+        positions[idx - 1].x = x;
+        positions[idx - 1].y = y;
+        positions[idx - 1].set = YES;
     }
+    ubyte best_idx = 0;
+    ubyte best_count = 0;
+    for(ubyte x = 0; x < team.players_count; x++) {
+
+        if(!positions[x].set) continue;
+        count = 0;
+        for(ubyte y = 0; y < team.players_count; y++)
+            if(x != y && positions[y].set
+                    && positions[x].x == positions[y].x
+                    && positions[x].y == positions[y].y) count++;
+
+        if(count < best_count) continue;
+        best_idx = x;
+        best_count = count;
+    }
+    data.target.x = positions[best_idx].x;
+    data.target.y = positions[best_idx].y;
     data.target.id = 1;
-    data.target.x = px[best_index];
-    data.target.y = py[best_index];
     return EXIT_SUCCESS;
 }
 
 byte player_move() {
 
-    if(!data.direction[0] && !data.direction[1]) return EXIT_SUCCESS;
+    const ushort posX = data.self.x;
+    const ushort posY = data.self.y;
 
-    ubyte new_x = data.self->x + data.direction[0];
-    ubyte new_y = data.self->y + data.direction[1];
+    if(semtimedop(data.semid, &data.sem->board_lock, 1, &data.sem->timeout)) {
 
-    if(semtimedop(data.semid, &data.sem->board_lock,
-                  1, &data.sem->timeout)) {
-
-        perror("player_move: semtimedop");
         data.code = errno;
+        perror("player_move: semtimedop");
         return EXIT_FAILURE;
     }
-    t_player* dst = &data.shm->board[new_x][new_y];
-    if(!dst->id) {
+    t_player* player;
+    ushort newX, newY;
+    for(ubyte x = 0; x < 4; x++) {
 
-        dst->id = data.self->id;
-        dst->color = data.self->color;
-        dst->x = new_x;
-        dst->y = new_y;
+        newX = posX + data.self.directions[x][0];
+        newY = posY + data.self.directions[x][1];
+        if(newX >= BOARD_WIDTH || newY >= BOARD_HEIGHT) continue;
 
-        data.self->id = 0;
-        data.self->color = 0;
-        data.self = dst;
+        player = &data.shm->board[newX][newY];
+        if(player->id == data.self.id) break;
+        if(player->id) continue;
+
+        player->id = data.self.id;
+        player->color = data.self.color;
+
+        player = &data.shm->board[posX][posY];
+        player->id = 0;
+        player->color = 0;
+
+        data.self.x = newX;
+        data.self.y = newY;
+        break;
     }
-    if(semtimedop(data.semid, &data.sem->board_unlock,
-                  1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->board_unlock, 1, &data.sem->timeout)) {
 
-        perror("player_move: semtimedop");
         data.code = errno;
+        perror("player_move: semtimedop");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
@@ -357,62 +273,52 @@ byte player_move() {
 
 static const char* team_color() {
 
-    if(data.self->color == RGB_RED_) return "\033[31m";
-    if(data.self->color == RGB_GREEN_) return "\033[32m";
-    if(data.self->color == RGB_YELLOW_) return "\033[33m";
-    if(data.self->color == RGB_MAGENTA_) return "\033[35m";
-    if(data.self->color == RGB_BLUE_) return "\033[34m";
-    if(data.self->color == RGB_CYAN_) return "\033[36m";
+    if(data.self.color == RGB_RED_) return RED;
+    if(data.self.color == RGB_GREEN_) return GREEN;
+    if(data.self.color == RGB_YELLOW_) return YELLOW;
+    if(data.self.color == RGB_MAGENTA_) return MAGENTA;
+    if(data.self.color == RGB_BLUE_) return BLUE;
+    if(data.self.color == RGB_CYAN_) return CYAN;
     return "";
 }
 
 byte player_log() {
 
-    if(semtimedop(data.semid, &data.sem->teams_lock,
-                  1, &data.sem->timeout)) {
+    t_team myteam = {0};
+    t_team* team = NULL;
+    if(semtimedop(data.semid, &data.sem->teams_lock, 1, &data.sem->timeout)) {
 
-        perror("player_log: semtimedop");
         data.code = errno;
+        perror("player_log: semtimedop");
         return EXIT_FAILURE;
     }
-    t_team* team = NULL;
-    for(ubyte x = 0; x < data.shm->max_teams; x++) {
+    for(ubyte x = 0; x < MAX_TEAMS; x++) {
 
-        if(!data.shm->teams[x].name[0]) continue;
-        if(strcmp(data.shm->teams[x].name, data.opt.team)) continue;
         team = &data.shm->teams[x];
+        if(!team->players_count) continue;
+        if(team->color != data.self.color) continue;
+        memcpy(&myteam, team, TEAM_SIZE);
         break;
     }
-    printf("\nPlayer: %d\n", data.self->id);
-    printf("Team: %s%s%s\n", team_color(), team->name, RESET);
-    printf("Team mates: %d\n", team->players_count);
-    printf("Teams count: %d\n", data.shm->teams_count);
+    const ubyte teams_count = data.shm->teams_count;
+    const ubyte players_count = data.shm->players_count;
 
-    if(semtimedop(data.semid, &data.sem->teams_unlock,
-                  1, &data.sem->timeout)) {
+    if(semtimedop(data.semid, &data.sem->teams_unlock, 1, &data.sem->timeout)) {
 
-        perror("player_log: semtimedop");
         data.code = errno;
+        perror("player_log: semtimedop");
         return EXIT_FAILURE;
     }
-    if(semtimedop(data.semid, &data.sem->players_count_lock,
-                  1, &data.sem->timeout)) {
+    printf("\nPlayer: %d\n", data.self.id);
+    printf("Position: %d, %d\n", data.self.x, data.self.y);
+    printf("Team: %s%s%s\n", team_color(), myteam.name, RESET);
+    printf("Team mates: %d\n", myteam.players_count - 1);
+    printf("Teams count: %d\n", teams_count);
+    printf("Players count: %d\n", players_count);
 
-        perror("player_log: semtimedop");
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
-    printf("Players count: %d\n", data.shm->players_count);
-
-    if(semtimedop(data.semid, &data.sem->players_count_unlock,
-                  1, &data.sem->timeout)) {
-
-        perror("player_log: semtimedop");
-        data.code = errno;
-        return EXIT_FAILURE;
-    }
-    printf("Position: %d, %d\n", data.self->x, data.self->y);
     if(data.target.id) printf("Target: %d, %d\n", data.target.x, data.target.y);
     else printf("Target: none\n");
+    if(data.nearest.id) printf("Nearest enemy: %d, %d\n", data.nearest.x, data.nearest.y);
+    else printf("Nearest enemy: none\n");
     return EXIT_SUCCESS;
 }

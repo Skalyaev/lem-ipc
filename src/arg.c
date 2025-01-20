@@ -4,11 +4,6 @@ extern t_lemipc data;
 
 void getargs(const int ac, char** const av) {
 
-    data.opt.width = MAX_WIDTH;
-    data.opt.height = MAX_HEIGHT;
-    data.opt.max_teams = MAX_TEAMS;
-    data.opt.max_players = MAX_PLAYERS;
-
     const char* const optstring = "gqh";
     const t_option options[] = {
 
