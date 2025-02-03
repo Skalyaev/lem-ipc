@@ -32,7 +32,7 @@
 ## Install
 
 ```bash
-apt update -y
+apt update
 apt install -y make
 apt install -y gcc
 ```
